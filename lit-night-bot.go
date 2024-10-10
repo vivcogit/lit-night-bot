@@ -126,6 +126,20 @@ func (vb *LitNightBot) handleList(chatId int64) {
 	vb.sendMessage(chatId, msg)
 }
 
+func (vb *LitNightBot) handleCurrent(chatId int64) {
+	cd := vb.getChatData(chatId)
+
+	var msg string
+
+	if cd.Current.Name == "" {
+		msg = "Похоже, у вас пока нет выбранной книги. Как насчёт выбрать что-нибудь интересное для чтения?"
+	} else {
+		msg = fmt.Sprintf("В данный момент вы читаете книгу \"%s\". Как вам она? Делитесь впечатлениями!", cd.Current.Name)
+	}
+
+	vb.sendMessage(chatId, msg)
+}
+
 func (vb *LitNightBot) handleAdd(chatId int64, book string) {
 	if book == "" {
 		vb.sendMessage(chatId, "Для добавления книги в список нужно указать её в команде add, например:\n/add Моя первая книга")
@@ -270,6 +284,8 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		vb.handleList(chatId)
 	case "add":
 		vb.handleAdd(chatId, cmdArg)
+	case "current":
+		vb.handleCurrent(chatId)
 	case "remove":
 		if cmdArg == "" {
 			vb.handleEmptyRemove(chatId)
