@@ -1,0 +1,4 @@
+.env
+*.prof
+*.test
+datas
