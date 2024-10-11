@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"golang.org/x/exp/rand"
 )
 
 type LitNightBot struct {
@@ -18,19 +19,44 @@ type LitNightBot struct {
 	dataPath string
 }
 
-type Book struct {
-	Name string `json:"name"`
+var progressJokes = []string{
+	"Думаю... думаю... кажется, нашел книгу, которая смотрит на меня в ответ!",
+	"Дайте мне пару секунд, книги устраивают бой за ваше внимание!",
+	"Секунду... мне нужно спросить у всех персонажей, кто готов к встрече.",
+	"Так, так, так... какая из книг станет звездой сегодняшнего вечера?",
+	"Магический шар предсказаний вращается... и... почти готов!",
+	"Дайте мне немного времени, книги все еще спорят, кто из них лучше.",
+	"Выбираю... кажется, одна из книг шепчет мне на ухо!",
+	"Загружаю данные... о, кажется, одна книга уже подмигнула мне!",
+	"Книги так и прыгают на полку, дайте мне минутку их успокоить!",
+	"Книги играют в прятки, но я вот-вот их найду!",
+	"Загружаю данные... 99%, 99%, 99%... Ой, опять зависло на 99%.",
+	"Ищу ответ в 42-страничной инструкции... почти нашел!",
+	"Анализирую отражение луны в глазах Шрека.",
+	"Отправляю запрос котам. Ответ от кота: 'мяу'. Перевожу...",
+	"Провожу многоходовочку, как Шерлок в последнем сезоне.",
+	"Запускаю квантовый процессор. Ой, это тостер, секунду...",
+	"Пересчитываю уток в Майнкрафт... Подождите немного.",
+	"Секунду... нахожу нужную инфу в файлах 'Мемы 2012-го'.",
+	"Проверяю, хватит ли колбасы для этого вычисления.",
+	"Сейчас, обнуляю счетчик дня без багов... Ой, он снова сломался.",
 }
 
-type HistoryItem struct {
-	Book Book      `json:"book"`
-	Date time.Time `json:"date"`
-}
+func (vb *LitNightBot) sendProgressJokes(chatId int64) {
+	rand.Seed(uint64((time.Now().UnixNano())))
 
-type ChatData struct {
-	Wishlist []Book        `json:"wishlist"`
-	History  []HistoryItem `json:"history"`
-	Current  Book          `json:"current_book"`
+	numMessages := rand.Intn(3) + 3
+
+	rand.Shuffle(len(progressJokes), func(i, j int) {
+		progressJokes[i], progressJokes[j] = progressJokes[j], progressJokes[i]
+	})
+
+	for i := 0; i < numMessages; i++ {
+		vb.sendMessage(chatId, progressJokes[i])
+
+		sleepDuration := time.Duration(rand.Intn(1000)+1000) * time.Millisecond
+		time.Sleep(sleepDuration)
+	}
 }
 
 func (vb *LitNightBot) getCallbackParamStr(action, data string) string {
@@ -117,7 +143,7 @@ func (vb *LitNightBot) handleList(chatId int64) {
 	}
 
 	msg := strings.Join(names, "\n")
-	fmt.Println(msg, names, cd)
+
 	if msg == "" {
 		vb.sendMessage(chatId, "Все книги из очереди уже прочитаны, и сейчас список пуст.\n"+
 			"Самое время добавить новые книги и продолжить наши литературные приключения!")
@@ -140,44 +166,61 @@ func (vb *LitNightBot) handleCurrent(chatId int64) {
 	vb.sendMessage(chatId, msg)
 }
 
-func (vb *LitNightBot) handleAdd(chatId int64, book string) {
-	if book == "" {
+func (vb *LitNightBot) handleCurrentRandom(chatId int64) {
+	cd := vb.getChatData(chatId)
+
+	if cd.Current.Name != "" {
+		vb.sendMessage(chatId,
+			fmt.Sprintf("Вы уже читаете \"%s\"\n"+
+				"Эта книга не заслуживает такого обращения!\n"+
+				"Но если вы хотите новую, давайте найдем ее вместе!\n"+
+				"Но сначала скажите ей об отмене",
+				cd.Current.Name),
+		)
+		return
+	}
+
+	if len(cd.Wishlist) == 0 {
+		vb.sendMessage(chatId, "Ваш вишлист пуст! Добавьте книги, чтобы я мог выбрать одну для вас.")
+		return
+	}
+
+	vb.sendProgressJokes(chatId)
+
+	randomIndex := rand.Intn(len(cd.Wishlist))
+
+	cd.Current = cd.Wishlist[randomIndex]
+	cd.removeBookFromWishList(cd.Wishlist[randomIndex].Name)
+
+	vb.setChatData(chatId, cd)
+
+	vb.sendMessage(chatId, fmt.Sprintf("Тадааам! Вот ваша книга: \"%s\". Приятного чтения!", cd.Current.Name))
+}
+
+func (vb *LitNightBot) handleAdd(chatId int64, bookname string) {
+	if bookname == "" {
 		vb.sendMessage(chatId, "Для добавления книги в список нужно указать её в команде add, например:\n/add Моя первая книга")
 		return
 	}
 	cd := vb.getChatData(chatId)
 
-	cd.Wishlist = append(cd.Wishlist, Book{book})
+	cd.addBookToWishlist(bookname)
 
 	vb.setChatData(chatId, cd)
 
-	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в список", book))
+	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в список", bookname))
 }
 
 func (vb *LitNightBot) handleRemove(chatId int64, bookname string) {
-	if bookname == "" {
-		vb.sendMessage(chatId, "Для удаления книги из списка нужно указать её в команде remove, например:\n/remove Моя первая книга")
-		return
-	}
-
 	cd := vb.getChatData(chatId)
+	err := cd.removeBookFromWishList(bookname)
+	vb.setChatData(chatId, cd)
 
-	index := -1
-	for i, b := range cd.Wishlist {
-		if strings.EqualFold(b.Name, bookname) {
-			index = i
-			break
-		}
-	}
-
-	if index == -1 {
-		vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" не найдена в списке", bookname))
+	if err != nil {
+		vb.sendMessage(chatId, err.Error())
 		return
 	}
 
-	cd.Wishlist = append(cd.Wishlist[:index], cd.Wishlist[index+1:]...)
-
-	vb.setChatData(chatId, cd)
 	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" удалена из списка", bookname))
 }
 
@@ -245,16 +288,16 @@ func (vb *LitNightBot) Init() {
 		// 	Command:     "current_complete",
 		// 	Description: "пометить книгу прочитанной",
 		// },
-		// {
-		// 	Command:     "current_random",
-		// 	Description: "выбрать рандомом из списка",
-		// },
+		{
+			Command:     "current_random",
+			Description: "выбрать рандомом из списка",
+		},
 		// {
 		// 	Command:     "current_set",
 		// 	Description: "выбрать книгу вручную",
 		// },
 		// {
-		// 	Command:     "current_abort",
+		// 	Command:     "current_abort", // спрашивать про удаление или возврат в вишлист
 		// 	Description: "отменить текущую книгу (вернуть в список?)",
 		// },
 		// {
@@ -282,10 +325,12 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		vb.handleStart(chatId)
 	case "list":
 		vb.handleList(chatId)
-	case "add":
+	case "add": // TODO сохранять автора
 		vb.handleAdd(chatId, cmdArg)
 	case "current":
 		vb.handleCurrent(chatId)
+	case "current_random":
+		vb.handleCurrentRandom(chatId)
 	case "remove":
 		if cmdArg == "" {
 			vb.handleEmptyRemove(chatId)
