@@ -104,7 +104,8 @@ func (vb *LitNightBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 
 	switch cbAction {
 	case "remove":
-		vb.handleRemove(chatId, cbParam)
+		vb.removeBookFromWishList(chatId, cbParam)
+
 		callbackConfig := tgbotapi.NewCallback(callback.ID, "Действие выполнено")
 		if _, err := vb.bot.Send(callbackConfig); err != nil {
 			log.Printf("Error sending callback response: %v", err)
@@ -116,7 +117,9 @@ func (vb *LitNightBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 
 }
 
-func (vb *LitNightBot) handleStart(chatId int64) {
+func (vb *LitNightBot) handleStart(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+
 	filePath := vb.getChatDataFilePath(chatId)
 	exists, _ := CheckFileExists(filePath)
 
@@ -134,7 +137,8 @@ func (vb *LitNightBot) handleStart(chatId int64) {
 	)
 }
 
-func (vb *LitNightBot) handleList(chatId int64) {
+func (vb *LitNightBot) handleList(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
 	var names []string
@@ -152,7 +156,8 @@ func (vb *LitNightBot) handleList(chatId int64) {
 	vb.sendMessage(chatId, msg)
 }
 
-func (vb *LitNightBot) handleCurrent(chatId int64) {
+func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
 	var msg string
@@ -166,7 +171,8 @@ func (vb *LitNightBot) handleCurrent(chatId int64) {
 	vb.sendMessage(chatId, msg)
 }
 
-func (vb *LitNightBot) handleCurrentRandom(chatId int64) {
+func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
 	if cd.Current.Name != "" {
@@ -185,24 +191,36 @@ func (vb *LitNightBot) handleCurrentRandom(chatId int64) {
 		return
 	}
 
-	vb.sendProgressJokes(chatId)
+	go func() {
+		vb.sendProgressJokes(chatId)
 
-	randomIndex := rand.Intn(len(cd.Wishlist))
+		randomIndex := rand.Intn(len(cd.Wishlist))
 
-	cd.Current = cd.Wishlist[randomIndex]
-	cd.removeBookFromWishList(cd.Wishlist[randomIndex].Name)
+		cd.Current = cd.Wishlist[randomIndex]
+		cd.removeBookFromWishList(cd.Wishlist[randomIndex].Name)
 
-	vb.setChatData(chatId, cd)
+		vb.setChatData(chatId, cd)
 
-	vb.sendMessage(chatId, fmt.Sprintf("Тадааам! Вот ваша книга: \"%s\". Приятного чтения!", cd.Current.Name))
+		vb.sendMessage(chatId, fmt.Sprintf("Тадааам! Вот ваша книга: \"%s\". Приятного чтения!", cd.Current.Name))
+	}()
 }
 
-func (vb *LitNightBot) handleAdd(chatId int64, bookname string) {
+func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	bookname := message.CommandArguments()
+
 	if bookname == "" {
-		vb.sendMessage(chatId, "Для добавления книги в список нужно указать её в команде add, например:\n/add Моя первая книга")
+		vb.sendMessage(chatId, "Эй, книжный искатель! 📚✨ Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде add, например:\n/add Моя первая книга")
 		return
 	}
+
 	cd := vb.getChatData(chatId)
+
+	if len(cd.Wishlist) >= 10 {
+		vb.sendMessage(chatId,
+			"Ой-ой! Похоже, ваш вишлист уже полон книг! 📚✨\nЧтобы добавить новую, давайте попрощаемся с одной из них.")
+		return
+	}
 
 	cd.addBookToWishlist(bookname)
 
@@ -211,7 +229,19 @@ func (vb *LitNightBot) handleAdd(chatId int64, bookname string) {
 	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в список", bookname))
 }
 
-func (vb *LitNightBot) handleRemove(chatId int64, bookname string) {
+func (vb *LitNightBot) handleRemove(message *tgbotapi.Message) {
+	bookname := message.CommandArguments()
+
+	if bookname == "" {
+		vb.handleEmptyRemove(message)
+		return
+	}
+
+	chatId := message.Chat.ID
+	vb.removeBookFromWishList(chatId, bookname)
+}
+
+func (vb *LitNightBot) removeBookFromWishList(chatId int64, bookname string) {
 	cd := vb.getChatData(chatId)
 	err := cd.removeBookFromWishList(bookname)
 	vb.setChatData(chatId, cd)
@@ -224,8 +254,8 @@ func (vb *LitNightBot) handleRemove(chatId int64, bookname string) {
 	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" удалена из списка", bookname))
 }
 
-// TODO add pagination
-func (vb *LitNightBot) handleEmptyRemove(chatId int64) {
+func (vb *LitNightBot) handleEmptyRemove(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
 	if len(cd.Wishlist) == 0 {
@@ -317,28 +347,21 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		return
 	}
 
-	chatId := update.Message.Chat.ID
-	cmdArg := update.Message.CommandArguments()
-
 	switch update.Message.Command() {
 	case "start":
-		vb.handleStart(chatId)
+		vb.handleStart(update.Message)
 	case "list":
-		vb.handleList(chatId)
+		vb.handleList(update.Message)
 	case "add": // TODO сохранять автора
-		vb.handleAdd(chatId, cmdArg)
+		vb.handleAdd(update.Message)
 	case "current":
-		vb.handleCurrent(chatId)
+		vb.handleCurrent(update.Message)
 	case "current_random":
-		vb.handleCurrentRandom(chatId)
+		vb.handleCurrentRandom(update.Message)
 	case "remove":
-		if cmdArg == "" {
-			vb.handleEmptyRemove(chatId)
-			return
-		}
-		vb.handleRemove(chatId, cmdArg)
+		vb.handleRemove(update.Message)
 	default:
-		vb.sendMessage(chatId, "Unknown command")
+		vb.sendMessage(update.Message.Chat.ID, "Unknown command")
 	}
 }
 
