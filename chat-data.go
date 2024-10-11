@@ -15,16 +15,24 @@ type HistoryItem struct {
 	Date time.Time `json:"date"`
 }
 
-type ChatData struct {
-	Wishlist []Book        `json:"wishlist"`
-	History  []HistoryItem `json:"history"`
-	Current  Book          `json:"current_book"`
+type WishlistItem struct {
+	Book Book `json:"book"`
 }
 
-func (cd *ChatData) removeBookFromWishList(bookname string) error {
+type CurrentBook struct {
+	Book Book `json:"book"`
+}
+
+type ChatData struct {
+	Wishlist []WishlistItem `json:"wishlist"`
+	History  []HistoryItem  `json:"history"`
+	Current  CurrentBook    `json:"current_book"`
+}
+
+func (cd *ChatData) RemoveBookFromWishlist(bookname string) error {
 	index := -1
 	for i, b := range cd.Wishlist {
-		if strings.EqualFold(b.Name, bookname) {
+		if strings.EqualFold(b.Book.Name, bookname) {
 			index = i
 			break
 		}
@@ -39,6 +47,16 @@ func (cd *ChatData) removeBookFromWishList(bookname string) error {
 	return nil
 }
 
-func (cd *ChatData) addBookToWishlist(bookname string) {
-	cd.Wishlist = append(cd.Wishlist, Book{Name: bookname})
+func (cd *ChatData) AddBookToWishlist(bookname string) {
+	cd.Wishlist = append(cd.Wishlist, WishlistItem{Book{Name: bookname}})
+}
+
+func (cd *ChatData) AddBookToHistory(bookname string) {
+	cd.History = append(
+		cd.History,
+		HistoryItem{
+			Book: Book{Name: bookname},
+			Date: time.Now(),
+		},
+	)
 }

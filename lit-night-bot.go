@@ -142,8 +142,8 @@ func (vb *LitNightBot) handleList(message *tgbotapi.Message) {
 	cd := vb.getChatData(chatId)
 
 	var names []string
-	for _, book := range cd.Wishlist {
-		names = append(names, book.Name)
+	for _, item := range cd.Wishlist {
+		names = append(names, item.Book.Name)
 	}
 
 	msg := strings.Join(names, "\n")
@@ -162,10 +162,10 @@ func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
 
 	var msg string
 
-	if cd.Current.Name == "" {
+	if cd.Current.Book.Name == "" {
 		msg = "Похоже, у вас пока нет выбранной книги. Как насчёт выбрать что-нибудь интересное для чтения?"
 	} else {
-		msg = fmt.Sprintf("В данный момент вы читаете книгу \"%s\". Как вам она? Делитесь впечатлениями!", cd.Current.Name)
+		msg = fmt.Sprintf("В данный момент вы читаете книгу \"%s\". Как вам она? Делитесь впечатлениями!", cd.Current.Book.Name)
 	}
 
 	vb.sendMessage(chatId, msg)
@@ -175,13 +175,13 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
-	if cd.Current.Name != "" {
+	if cd.Current.Book.Name != "" {
 		vb.sendMessage(chatId,
 			fmt.Sprintf("Вы уже читаете \"%s\"\n"+
 				"Эта книга не заслуживает такого обращения!\n"+
 				"Но если вы хотите новую, давайте найдем ее вместе!\n"+
 				"Но сначала скажите ей об отмене",
-				cd.Current.Name),
+				cd.Current.Book.Name),
 		)
 		return
 	}
@@ -196,12 +196,12 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 
 		randomIndex := rand.Intn(len(cd.Wishlist))
 
-		cd.Current = cd.Wishlist[randomIndex]
-		cd.removeBookFromWishList(cd.Wishlist[randomIndex].Name)
+		cd.Current = CurrentBook{cd.Wishlist[randomIndex].Book}
+		cd.RemoveBookFromWishlist(cd.Wishlist[randomIndex].Book.Name)
 
 		vb.setChatData(chatId, cd)
 
-		vb.sendMessage(chatId, fmt.Sprintf("Тадааам! Вот ваша книга: \"%s\". Приятного чтения!", cd.Current.Name))
+		vb.sendMessage(chatId, fmt.Sprintf("Тадааам! Вот ваша книга: \"%s\". Приятного чтения!", cd.Current.Book.Name))
 	}()
 }
 
@@ -222,7 +222,28 @@ func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
 		return
 	}
 
-	cd.addBookToWishlist(bookname)
+	cd.AddBookToWishlist(bookname)
+
+	vb.setChatData(chatId, cd)
+
+	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в список", bookname))
+}
+
+func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	bookname := message.CommandArguments()
+
+	if bookname == "" {
+		vb.sendMessage(chatId,
+			"Эй, книжный искатель! 📚✨\n"+
+				"Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде history-add, например:\n/history-add Моя первая книга",
+		)
+		return
+	}
+
+	cd := vb.getChatData(chatId)
+
+	cd.AddBookToHistory(bookname)
 
 	vb.setChatData(chatId, cd)
 
@@ -243,7 +264,7 @@ func (vb *LitNightBot) handleRemove(message *tgbotapi.Message) {
 
 func (vb *LitNightBot) removeBookFromWishList(chatId int64, bookname string) {
 	cd := vb.getChatData(chatId)
-	err := cd.removeBookFromWishList(bookname)
+	err := cd.RemoveBookFromWishlist(bookname)
 	vb.setChatData(chatId, cd)
 
 	if err != nil {
@@ -264,8 +285,12 @@ func (vb *LitNightBot) handleEmptyRemove(message *tgbotapi.Message) {
 	}
 
 	var inlineButtons [][]tgbotapi.InlineKeyboardButton
-	for _, book := range cd.Wishlist {
-		button := tgbotapi.NewInlineKeyboardButtonData("❌ "+book.Name, vb.getCallbackParamStr("remove", book.Name))
+	for _, item := range cd.Wishlist {
+		bookname := item.Book.Name
+		button := tgbotapi.NewInlineKeyboardButtonData(
+			"❌ "+bookname,
+			vb.getCallbackParamStr("remove", bookname),
+		)
 
 		inlineRow := tgbotapi.NewInlineKeyboardRow(button)
 
@@ -298,10 +323,10 @@ func (vb *LitNightBot) Init() {
 		// 	Command:     "history",
 		// 	Description: "просмотр прочитанных",
 		// },
-		// {
-		// 	Command:     "add_history",
-		// 	Description: "добавить в прочитанные",
-		// },
+		{
+			Command:     "add_history",
+			Description: "добавить в прочитанные",
+		},
 		// {
 		// 	Command:     "remove_history",
 		// 	Description: "удалить из прочитанных",
@@ -314,10 +339,10 @@ func (vb *LitNightBot) Init() {
 		// 	Command:     "current_deadline",
 		// 	Description: "назначить срок дедлайна по текущей книге с опциональным напоминанием",
 		// },
-		// {
-		// 	Command:     "current_complete",
-		// 	Description: "пометить книгу прочитанной",
-		// },
+		{
+			Command:     "current_complete",
+			Description: "пометить книгу прочитанной",
+		},
 		{
 			Command:     "current_random",
 			Description: "выбрать рандомом из списка",
@@ -360,6 +385,8 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		vb.handleCurrentRandom(update.Message)
 	case "remove":
 		vb.handleRemove(update.Message)
+	case "history-add":
+		vb.handleAddHistory(update.Message)
 	default:
 		vb.sendMessage(update.Message.Chat.ID, "Unknown command")
 	}
