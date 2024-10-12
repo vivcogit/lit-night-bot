@@ -292,9 +292,22 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	}()
 }
 
+func handleMultiArgs(rawArgs []string) []string {
+	var filtered []string
+	for _, str := range rawArgs {
+		arg := strings.TrimSpace(str)
+		if arg != "" {
+			filtered = append(filtered, str)
+		}
+	}
+	return filtered
+}
+
 func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	booknames := strings.Split(message.CommandArguments(), "\n")
+	booknames := handleMultiArgs(strings.Split(message.CommandArguments(), "\n"))
+
+	fmt.Printf("TESSSST!!! raw: '%s', slice: %v", message.CommandArguments(), len(booknames))
 
 	if len(booknames) == 0 {
 		vb.sendMessage(chatId, "Эй, книжный искатель! 📚✨ Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде add, например:\n/add Моя первая книга")
@@ -319,12 +332,16 @@ func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
 
 	vb.setChatData(chatId, cd)
 
-	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в список", booknames))
+	if len(booknames) == 1 {
+		vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена.", booknames[0]))
+	} else {
+		vb.sendMessage(chatId, fmt.Sprintf("Книги \"%s\" добавлены.", strings.Join(booknames, "\", \"")))
+	}
 }
 
 func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	booknames := strings.Split(message.CommandArguments(), "\n")
+	booknames := handleMultiArgs(strings.Split(message.CommandArguments(), "\n"))
 
 	if len(booknames) == 0 {
 		vb.sendMessage(chatId,
@@ -341,10 +358,8 @@ func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 	vb.setChatData(chatId, cd)
 
 	if len(booknames) == 1 {
-		// Если добавлена одна книга
 		vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в историю.", booknames[0]))
 	} else {
-		// Если добавлено несколько книг
 		vb.sendMessage(chatId, fmt.Sprintf("Книги \"%s\" добавлены в историю.", strings.Join(booknames, "\", \"")))
 	}
 }
