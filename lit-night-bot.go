@@ -153,7 +153,7 @@ func (vb *LitNightBot) handleHistoryList(message *tgbotapi.Message) {
 		return
 	}
 
-	vb.sendMessage(chatId, "Вот ваши уже прочитанные книги:\n\n"+strings.Join(names, "\n")+"\nОтличная работа! 👏📖")
+	vb.sendMessage(chatId, "Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\nОтличная работа! 👏📖")
 }
 
 func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
