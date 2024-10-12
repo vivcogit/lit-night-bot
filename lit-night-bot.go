@@ -292,21 +292,9 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	}()
 }
 
-func handleMultiArgs(rawArgs []string) []string {
-	var filtered []string
-	for _, str := range rawArgs {
-		str = strings.TrimSpace(str)
-
-		if str != "" {
-			filtered = append(filtered, str)
-		}
-	}
-	return filtered
-}
-
 func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	booknames := handleMultiArgs(strings.Split(message.CommandArguments(), "\n"))
+	booknames := HandleMultiArgs(strings.Split(message.CommandArguments(), "\n"))
 
 	if len(booknames) == 0 {
 		vb.sendMessage(chatId, "Эй, книжный искатель! 📚✨ Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде add, например:\n/add Моя первая книга")
@@ -340,7 +328,7 @@ func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
 
 func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	booknames := handleMultiArgs(strings.Split(message.CommandArguments(), "\n"))
+	booknames := HandleMultiArgs(strings.Split(message.CommandArguments(), "\n"))
 
 	if len(booknames) == 0 {
 		vb.sendMessage(chatId,
@@ -429,7 +417,7 @@ func (vb *LitNightBot) handleEmptyRemove(message *tgbotapi.Message) {
 	for _, item := range cd.Wishlist {
 		bookname := item.Book.Name
 		button := tgbotapi.NewInlineKeyboardButtonData(
-			"❌ "+bookname,
+			TruncateString("❌ "+bookname, 60),
 			vb.getCallbackParamStr("remove", bookname),
 		)
 
