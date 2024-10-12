@@ -29,10 +29,22 @@ type ChatData struct {
 	Current  CurrentBook    `json:"current_book"`
 }
 
-func (cd *ChatData) RemoveBookFromWishlist(bookname string) error {
+type HasBook interface {
+	GetBook() Book
+}
+
+func (wi WishlistItem) GetBook() Book {
+	return wi.Book
+}
+
+func (hi HistoryItem) GetBook() Book {
+	return hi.Book
+}
+
+func RemoveBookFromBooklist[T HasBook](booklist *[]T, bookname string) error {
 	index := -1
-	for i, b := range cd.Wishlist {
-		if strings.EqualFold(b.Book.Name, bookname) {
+	for i, b := range *booklist {
+		if strings.EqualFold(b.GetBook().Name, bookname) {
 			index = i
 			break
 		}
@@ -42,9 +54,17 @@ func (cd *ChatData) RemoveBookFromWishlist(bookname string) error {
 		return fmt.Errorf("книга \"%s\" не найдена в списке", bookname)
 	}
 
-	cd.Wishlist = append(cd.Wishlist[:index], cd.Wishlist[index+1:]...)
+	*booklist = append((*booklist)[:index], (*booklist)[index+1:]...)
 
 	return nil
+}
+
+func (cd *ChatData) RemoveBookFromWishlist(bookname string) error {
+	return RemoveBookFromBooklist(&cd.Wishlist, bookname)
+}
+
+func (cd *ChatData) RemoveBookFromHistory(bookname string) error {
+	return RemoveBookFromBooklist(&cd.History, bookname)
 }
 
 func (cd *ChatData) AddBookToWishlist(bookname string) {
@@ -59,4 +79,8 @@ func (cd *ChatData) AddBookToHistory(bookname string) {
 			Date: time.Now(),
 		},
 	)
+}
+
+func (cd *ChatData) SetCurrentBook(bookname string) {
+	cd.Current = CurrentBook{Book{bookname}}
 }

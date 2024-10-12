@@ -104,7 +104,7 @@ func (vb *LitNightBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 
 	switch cbAction {
 	case "remove":
-		vb.removeBookFromWishList(chatId, cbParam)
+		vb.removeBookFromWishlist(chatId, cbParam)
 
 		callbackConfig := tgbotapi.NewCallback(callback.ID, "Действие выполнено")
 		if _, err := vb.bot.Send(callbackConfig); err != nil {
@@ -171,6 +171,73 @@ func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
 	vb.sendMessage(chatId, msg)
 }
 
+func (vb *LitNightBot) handleCurrentSet(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	bookname := message.CommandArguments()
+
+	cd := vb.getChatData(chatId)
+
+	if cd.Current.Book.Name != "" {
+		vb.sendMessage(chatId,
+			fmt.Sprintf("О, кажется, вы уже читаете \"%s\"! 📖\n"+
+				"Может, сначала завершим эту книгу, прежде чем начать новую приключение? 😉",
+				cd.Current.Book.Name,
+			))
+		return
+	}
+
+	err := cd.RemoveBookFromWishlist(bookname)
+	cd.SetCurrentBook(bookname)
+	vb.setChatData(chatId, cd)
+
+	if err != nil && len(cd.Wishlist) > 0 {
+		vb.sendMessage(
+			chatId,
+			"Кажется, выбранная вами книга не из вашего вишлиста. 📚\n"+
+				"Может, в следующий раз стоит выбрать что-то из списка желаемого чтения? 😄",
+		)
+		return
+	}
+
+	vb.sendMessage(
+		chatId,
+		fmt.Sprintf(
+			"Отличный выбор! Теперь ваша новая книга для чтения — \"%s\". 📚✨\n"+
+				"Удачного чтения, и не забудьте вернуться для обсуждения! 😉",
+			bookname,
+		),
+	)
+}
+
+func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	cd := vb.getChatData(chatId)
+
+	currentBook := cd.Current.Book.Name
+	if currentBook == "" {
+		vb.sendMessage(
+			chatId,
+			"Хмм... Похоже, у вас ещё нет книги в процессе чтения.\n"+
+				"Давайте выберем что-нибудь интересное и погрузимся в новые страницы! 📚✨",
+		)
+	}
+
+	cd.AddBookToHistory(currentBook)
+	cd.Current = CurrentBook{}
+
+	vb.setChatData(chatId, cd)
+
+	vb.sendMessage(
+		chatId,
+		fmt.Sprintf(
+			"Ура! Книга %s прочитана! 🎉\n"+
+				"Надеюсь, она оставила вам море впечатлений."+
+				"Готовы к следующему литературному приключению?",
+			currentBook,
+		),
+	)
+}
+
 func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
@@ -195,9 +262,10 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 		vb.sendProgressJokes(chatId)
 
 		randomIndex := rand.Intn(len(cd.Wishlist))
+		randomBook := cd.Wishlist[randomIndex].Book.Name
 
-		cd.Current = CurrentBook{cd.Wishlist[randomIndex].Book}
-		cd.RemoveBookFromWishlist(cd.Wishlist[randomIndex].Book.Name)
+		cd.SetCurrentBook(randomBook)
+		cd.RemoveBookFromWishlist(randomBook)
 
 		vb.setChatData(chatId, cd)
 
@@ -250,7 +318,7 @@ func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в список", bookname))
 }
 
-func (vb *LitNightBot) handleRemove(message *tgbotapi.Message) {
+func (vb *LitNightBot) handleRemoveWishlist(message *tgbotapi.Message) {
 	bookname := message.CommandArguments()
 
 	if bookname == "" {
@@ -259,10 +327,38 @@ func (vb *LitNightBot) handleRemove(message *tgbotapi.Message) {
 	}
 
 	chatId := message.Chat.ID
-	vb.removeBookFromWishList(chatId, bookname)
+	vb.removeBookFromWishlist(chatId, bookname)
 }
 
-func (vb *LitNightBot) removeBookFromWishList(chatId int64, bookname string) {
+func (vb *LitNightBot) handleRemoveHistory(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	bookname := message.CommandArguments()
+
+	if bookname == "" {
+		vb.sendMessage(chatId,
+			"Чтобы удалить книгу из истории нужно сказать мне её название: /history-remove Название книги\n"+
+				"Таков путь!",
+		)
+		return
+	}
+
+	vb.removeBookFromHistory(chatId, bookname)
+}
+
+func (vb *LitNightBot) removeBookFromHistory(chatId int64, bookname string) {
+	cd := vb.getChatData(chatId)
+	err := cd.RemoveBookFromHistory(bookname)
+	vb.setChatData(chatId, cd)
+
+	if err != nil {
+		vb.sendMessage(chatId, err.Error())
+		return
+	}
+
+	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" удалена из списка", bookname))
+}
+
+func (vb *LitNightBot) removeBookFromWishlist(chatId int64, bookname string) {
 	cd := vb.getChatData(chatId)
 	err := cd.RemoveBookFromWishlist(bookname)
 	vb.setChatData(chatId, cd)
@@ -327,10 +423,10 @@ func (vb *LitNightBot) Init() {
 			Command:     "add_history",
 			Description: "добавить в прочитанные",
 		},
-		// {
-		// 	Command:     "remove_history",
-		// 	Description: "удалить из прочитанных",
-		// },
+		{
+			Command:     "history_remove",
+			Description: "удалить из прочитанных",
+		},
 		{
 			Command:     "current",
 			Description: "отобразить текущую книгу",
@@ -347,10 +443,10 @@ func (vb *LitNightBot) Init() {
 			Command:     "current_random",
 			Description: "выбрать рандомом из списка",
 		},
-		// {
-		// 	Command:     "current_set",
-		// 	Description: "выбрать книгу вручную",
-		// },
+		{
+			Command:     "current_set",
+			Description: "выбрать книгу вручную",
+		},
 		// {
 		// 	Command:     "current_abort", // спрашивать про удаление или возврат в вишлист
 		// 	Description: "отменить текущую книгу (вернуть в список?)",
@@ -383,10 +479,14 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		vb.handleCurrent(update.Message)
 	case "current_random":
 		vb.handleCurrentRandom(update.Message)
+	case "current_complete":
+		vb.handleCurrentComplete(update.Message)
 	case "remove":
-		vb.handleRemove(update.Message)
+		vb.handleRemoveWishlist(update.Message)
 	case "history-add":
 		vb.handleAddHistory(update.Message)
+	case "history-remove":
+		vb.handleRemoveHistory(update.Message)
 	default:
 		vb.sendMessage(update.Message.Chat.ID, "Unknown command")
 	}
