@@ -136,7 +136,7 @@ func (vb *LitNightBot) handleWishlist(message *tgbotapi.Message) {
 		return
 	}
 
-	vb.sendMessage(chatId, "Вот что ждёт вас в ближайшее время:\n\n"+strings.Join(names, "\n")+"\n\nГотовы начать? 📖✨")
+	vb.sendMessage(chatId, GetWishlistMessage(names))
 }
 
 func (vb *LitNightBot) handleHistoryList(message *tgbotapi.Message) {

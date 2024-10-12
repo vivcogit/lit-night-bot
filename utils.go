@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 func TruncateString(str string, maxLength int) string {
 	if len(str) > maxLength {
@@ -19,4 +22,17 @@ func HandleMultiArgs(rawArgs []string) []string {
 		}
 	}
 	return filtered
+}
+
+func GetWishlistMessage(books []string) string {
+	var formattedList strings.Builder
+	formattedList.WriteString("📚 Ваши книги в вишлисте:\n\n")
+
+	for i, book := range books {
+		formattedList.WriteString(fmt.Sprintf("%d. %s\n", i+1, book))
+	}
+
+	formattedList.WriteString("\n🎉 Не забудьте выбрать книгу для чтения!")
+
+	return formattedList.String()
 }
