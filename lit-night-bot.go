@@ -188,12 +188,17 @@ func (vb *LitNightBot) handleCurrentSet(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	bookname := message.CommandArguments()
 
+	if bookname == "" {
+		vb.sendMessage(chatId, "/current-set <bookname>")
+		return
+	}
+
 	cd := vb.getChatData(chatId)
 
 	if cd.Current.Book.Name != "" {
 		vb.sendMessage(chatId,
 			fmt.Sprintf("О, кажется, вы уже читаете \"%s\"! 📖\n"+
-				"Может, сначала завершим эту книгу, прежде чем начать новую приключение? 😉",
+				"Может, сначала завершим эту книгу, прежде чем начать новое приключение? 😉",
 				cd.Current.Book.Name,
 			))
 		return
@@ -350,7 +355,7 @@ func (vb *LitNightBot) handleRemoveHistory(message *tgbotapi.Message) {
 
 	if bookname == "" {
 		vb.sendMessage(chatId,
-			"Чтобы удалить книгу из истории нужно сказать мне её название: /history-remove Название книги\n"+
+			"Чтобы удалить книгу из истории нужно сказать мне её название: /history_remove Название книги\n"+
 				"Таков путь!",
 		)
 		return
