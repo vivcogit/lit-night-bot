@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -19,58 +18,21 @@ type LitNightBot struct {
 	dataPath string
 }
 
-var progressJokes = []string{
-	"Думаю... думаю... кажется, нашел книгу, которая смотрит на меня в ответ!",
-	"Дайте мне пару секунд, книги устраивают бой за ваше внимание!",
-	"Секунду... мне нужно спросить у всех персонажей, кто готов к встрече.",
-	"Так, так, так... какая из книг станет звездой сегодняшнего вечера?",
-	"Магический шар предсказаний вращается... и... почти готов!",
-	"Дайте мне немного времени, книги все еще спорят, кто из них лучше.",
-	"Выбираю... кажется, одна из книг шепчет мне на ухо!",
-	"Загружаю данные... о, кажется, одна книга уже подмигнула мне!",
-	"Книги так и прыгают на полку, дайте мне минутку их успокоить!",
-	"Книги играют в прятки, но я вот-вот их найду!",
-	"Загружаю данные... 99%, 99%, 99%... Ой, опять зависло на 99%.",
-	"Ищу ответ в 42-страничной инструкции... почти нашел!",
-	"Анализирую отражение луны в глазах Шрека.",
-	"Отправляю запрос котам. Ответ от кота: 'мяу'. Перевожу...",
-	"Провожу многоходовочку, как Шерлок в последнем сезоне.",
-	"Запускаю квантовый процессор. Ой, это тостер, секунду...",
-	"Пересчитываю уток в Майнкрафт... Подождите немного.",
-	"Секунду... нахожу нужную инфу в файлах 'Мемы 2012-го'.",
-	"Проверяю, хватит ли колбасы для этого вычисления.",
-	"Сейчас, обнуляю счетчик дня без багов... Ой, он снова сломался.",
-}
-
 func (vb *LitNightBot) sendProgressJokes(chatId int64) {
 	rand.Seed(uint64((time.Now().UnixNano())))
 
 	numMessages := rand.Intn(3) + 3
 
-	rand.Shuffle(len(progressJokes), func(i, j int) {
-		progressJokes[i], progressJokes[j] = progressJokes[j], progressJokes[i]
+	rand.Shuffle(len(ProgressJokes), func(i, j int) {
+		ProgressJokes[i], ProgressJokes[j] = ProgressJokes[j], ProgressJokes[i]
 	})
 
 	for i := 0; i < numMessages; i++ {
-		vb.sendMessage(chatId, progressJokes[i])
+		vb.sendMessage(chatId, ProgressJokes[i])
 
 		sleepDuration := time.Duration(rand.Intn(1000)+1000) * time.Millisecond
 		time.Sleep(sleepDuration)
 	}
-}
-
-func (vb *LitNightBot) getCallbackParamStr(action, data string) string {
-	return action + ":" + data
-}
-
-func (vb *LitNightBot) getCallbackParam(callbackData string) (string, string, error) {
-	cb := strings.Split(callbackData, ":")
-
-	if len(cb) != 2 {
-		return "", "", errors.New("Неизвестная операция: " + callbackData)
-	}
-
-	return cb[0], cb[1], nil
 }
 
 func (vb *LitNightBot) getChatDataFilePath(chatId int64) string {
@@ -88,33 +50,58 @@ func (vb *LitNightBot) setChatData(chatId int64, cd *ChatData) {
 	WriteJSONToFile(vb.getChatDataFilePath(chatId), cd)
 }
 
+func (vb *LitNightBot) editMessage(chatId int64, msgID int, text string) error {
+	editMsg := tgbotapi.NewEditMessageText(chatId, msgID, text)
+	editMsg.ReplyMarkup = nil
+	_, err := vb.bot.Send(editMsg)
+
+	return err
+}
+
 func (vb *LitNightBot) sendMessage(chatId int64, text string) {
 	vb.bot.Send(tgbotapi.NewMessage(chatId, text))
 }
 
-func (vb *LitNightBot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
-	cbAction, cbParam, err := vb.getCallbackParam(callback.Data)
+func (vb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
+	cbAction, cbParam, err := GetCallbackParam(update.CallbackQuery.Data)
 
 	if err != nil {
 		fmt.Println(err.Error())
 		return
 	}
 
-	chatId := callback.Message.Chat.ID
+	chatId := update.CallbackQuery.Message.Chat.ID
 
 	switch cbAction {
-	case "remove":
+	case Remove:
 		vb.removeBookFromWishlist(chatId, cbParam)
 
-		callbackConfig := tgbotapi.NewCallback(callback.ID, "Действие выполнено")
-		if _, err := vb.bot.Send(callbackConfig); err != nil {
-			log.Printf("Error sending callback response: %v", err)
-		}
+		callbackConfig := tgbotapi.NewCallback(update.CallbackQuery.ID, "🎉 Ура! Книга удалена из вашего списка желаемого! Теперь у вас больше времени для выбора новой! 📚")
+		vb.bot.Send(callbackConfig)
 		return
-	default:
-		log.Printf("Неизвестный callback " + cbAction)
-	}
 
+	case Cancel:
+		vb.editMessage(chatId, update.CallbackQuery.Message.MessageID, "🤭 Упс! Вы отменили действие! Не переживайте, в следующий раз все получится! 😉")
+
+	case CurrentToHistory:
+		cd := vb.getChatData(chatId)
+		currentBookName := cd.Current.Book.Name
+		cd.AddBookToHistory(currentBookName)
+		cd.Current = CurrentBook{}
+		vb.setChatData(chatId, cd)
+		vb.editMessage(chatId, update.CallbackQuery.Message.MessageID, fmt.Sprintf("📖 Книга \"%s\" теперь в истории! Время выбрать новую приключенческую историю! 🚀", currentBookName))
+
+	case CurrentToWishlist:
+		cd := vb.getChatData(chatId)
+		currentBookName := cd.Current.Book.Name
+		cd.AddBookToWishlist(currentBookName)
+		cd.Current = CurrentBook{}
+		vb.setChatData(chatId, cd)
+		vb.editMessage(chatId, update.CallbackQuery.Message.MessageID, fmt.Sprintf("📝 Книга \"%s\" вернулась в список ожидания! Давайте подберем для вас новую интересную историю! 📚✨", currentBookName))
+
+	default:
+		log.Printf("Неизвестный callback: %s. Пожалуйста, позаботьтесь об этом, чтобы мы могли помочь вам выбрать следующую книгу! 📚😅", string(cbAction))
+	}
 }
 
 func (vb *LitNightBot) handleStart(message *tgbotapi.Message) {
@@ -303,13 +290,13 @@ func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
 
 	cd := vb.getChatData(chatId)
 
-	if len(cd.Wishlist) >= 10 {
+	if len(cd.Wishlist) >= 9 {
 		vb.sendMessage(chatId,
 			"Ой-ой! Похоже, ваш вишлист уже полон книг! 📚✨\nЧтобы добавить новую, давайте попрощаемся с одной из них.")
 		return
 	}
 
-	if len(cd.Wishlist)+len(booknames) >= 10 {
+	if len(cd.Wishlist)+len(booknames) >= 9 {
 		vb.sendMessage(chatId,
 			"Ой-ой! Похоже, я не смогу запомнить столько книг! 📚✨\nЧтобы добавить новые, давайте попрощаемся с кем-то из старых.")
 		return
@@ -418,7 +405,7 @@ func (vb *LitNightBot) handleEmptyRemove(message *tgbotapi.Message) {
 		bookname := item.Book.Name
 		button := tgbotapi.NewInlineKeyboardButtonData(
 			"❌ "+bookname,
-			vb.getCallbackParamStr("remove", bookname),
+			GetCallbackParamStr("remove", bookname),
 		)
 
 		inlineRow := tgbotapi.NewInlineKeyboardRow(button)
@@ -429,6 +416,45 @@ func (vb *LitNightBot) handleEmptyRemove(message *tgbotapi.Message) {
 	msg := tgbotapi.NewMessage(chatId, "Вот ваши книги в списке:")
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(inlineButtons...)
+	msg.ReplyMarkup = keyboard
+
+	vb.bot.Send(msg)
+}
+
+func (vb *LitNightBot) handleCurrentAbort(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	cd := vb.getChatData(chatId)
+
+	currentBook := cd.Current.Book.Name
+
+	if cd.Current.Book.Name == "" {
+		vb.sendMessage(
+			chatId,
+			"🚫 Ой-ой! Похоже, у вас нет текущей выбранной книги.\nКак насчет того, чтобы выбрать новую историю? 📚✨",
+		)
+		return
+	}
+
+	msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("🤔 Что делать с отменяемой книгой \"%s\"? Давайте решим это вместе! 🎉", currentBook))
+
+	buttons := []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData(
+			"❌ Никогда",
+			GetCallbackParamStr(CurrentToHistory, currentBook),
+		),
+		tgbotapi.NewInlineKeyboardButtonData(
+			"🕑 Потом",
+			GetCallbackParamStr(CurrentToWishlist, currentBook),
+		),
+		tgbotapi.NewInlineKeyboardButtonData(
+			"Отмена",
+			GetCallbackParamStr(Cancel, "_"),
+		),
+	}
+
+	inlineRow := tgbotapi.NewInlineKeyboardRow(buttons...)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(inlineRow)
 	msg.ReplyMarkup = keyboard
 
 	vb.bot.Send(msg)
@@ -514,6 +540,8 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		vb.handleCurrentSet(update.Message)
 	case "current_random":
 		vb.handleCurrentRandom(update.Message)
+	case "current_abort":
+		vb.handleCurrentAbort(update.Message)
 	case "current_complete":
 		vb.handleCurrentComplete(update.Message)
 	case "remove":
@@ -537,7 +565,7 @@ func (vb *LitNightBot) Start() {
 
 	for update := range updates {
 		if update.CallbackQuery != nil {
-			vb.handleCallbackQuery(update.CallbackQuery)
+			vb.handleCallbackQuery(&update)
 			continue
 		}
 
