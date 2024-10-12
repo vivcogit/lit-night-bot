@@ -137,23 +137,36 @@ func (vb *LitNightBot) handleStart(message *tgbotapi.Message) {
 	)
 }
 
-func (vb *LitNightBot) handleList(message *tgbotapi.Message) {
+func (vb *LitNightBot) handleWishlist(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
-	var names []string
-	for _, item := range cd.Wishlist {
-		names = append(names, item.Book.Name)
-	}
+	names := cd.GetWishlistBooks()
 
-	msg := strings.Join(names, "\n")
-
-	if msg == "" {
+	if len(names) == 0 {
 		vb.sendMessage(chatId, "Все книги из очереди уже прочитаны, и сейчас список пуст.\n"+
 			"Самое время добавить новые книги и продолжить наши литературные приключения!")
 		return
 	}
-	vb.sendMessage(chatId, msg)
+
+	vb.sendMessage(chatId, "Вот что ждёт вас в ближайшее время:\n\n"+strings.Join(names, "\n")+"\n\nГотовы начать? 📖✨")
+}
+
+func (vb *LitNightBot) handleHistoryList(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	cd := vb.getChatData(chatId)
+
+	names := cd.GetHistoryBooks()
+
+	if len(names) == 0 {
+		vb.sendMessage(chatId,
+			"Кажется, список прочитанных книг пока пуст... 😕\n"+
+				"Но не переживайте! Начните прямо сейчас, и скоро здесь будут ваши книжные достижения! 📚💪",
+		)
+		return
+	}
+
+	vb.sendMessage(chatId, "Вот ваши уже прочитанные книги:\n\n"+strings.Join(names, "\n")+"\n\nОтличная работа! 👏📖")
 }
 
 func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
@@ -415,10 +428,10 @@ func (vb *LitNightBot) Init() {
 			Command:     "remove",
 			Description: "удаление из списка",
 		},
-		// {
-		// 	Command:     "history",
-		// 	Description: "просмотр прочитанных",
-		// },
+		{
+			Command:     "history",
+			Description: "просмотр прочитанных",
+		},
 		{
 			Command:     "add_history",
 			Description: "добавить в прочитанные",
@@ -472,17 +485,21 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 	case "start":
 		vb.handleStart(update.Message)
 	case "list":
-		vb.handleList(update.Message)
+		vb.handleWishlist(update.Message)
 	case "add": // TODO сохранять автора
 		vb.handleAdd(update.Message)
 	case "current":
 		vb.handleCurrent(update.Message)
+	case "handleCurrentSet":
+		vb.handleCurrentSet(update.Message)
 	case "current_random":
 		vb.handleCurrentRandom(update.Message)
 	case "current_complete":
 		vb.handleCurrentComplete(update.Message)
 	case "remove":
 		vb.handleRemoveWishlist(update.Message)
+	case "history":
+		vb.handleHistoryList(update.Message)
 	case "history-add":
 		vb.handleAddHistory(update.Message)
 	case "history-remove":

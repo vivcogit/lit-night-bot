@@ -59,6 +59,15 @@ func RemoveBookFromBooklist[T HasBook](booklist *[]T, bookname string) error {
 	return nil
 }
 
+func GetBooknamesFromBooklist[T HasBook](booklist *[]T) []string {
+	var names []string
+	for _, item := range *booklist {
+		names = append(names, item.GetBook().Name)
+	}
+
+	return names
+}
+
 func (cd *ChatData) RemoveBookFromWishlist(bookname string) error {
 	return RemoveBookFromBooklist(&cd.Wishlist, bookname)
 }
@@ -83,4 +92,12 @@ func (cd *ChatData) AddBookToHistory(bookname string) {
 
 func (cd *ChatData) SetCurrentBook(bookname string) {
 	cd.Current = CurrentBook{Book{bookname}}
+}
+
+func (cd *ChatData) GetWishlistBooks() []string {
+	return GetBooknamesFromBooklist(&cd.Wishlist)
+}
+
+func (cd *ChatData) GetHistoryBooks() []string {
+	return GetBooknamesFromBooklist(&cd.History)
 }
