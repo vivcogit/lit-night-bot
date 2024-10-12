@@ -9,4 +9,5 @@ COPY *.go ./
 
 RUN GOOS=linux go build -o ./app
 
+RUN mkdir /app/datas
 CMD ["/app/app"]
