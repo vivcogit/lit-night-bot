@@ -166,7 +166,7 @@ func (vb *LitNightBot) handleHistoryList(message *tgbotapi.Message) {
 		return
 	}
 
-	vb.sendMessage(chatId, "Вот ваши уже прочитанные книги:\n\n"+strings.Join(names, "\n")+"\n\nОтличная работа! 👏📖")
+	vb.sendMessage(chatId, "Вот ваши уже прочитанные книги:\n\n"+strings.Join(names, "\n")+"\nОтличная работа! 👏📖")
 }
 
 func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
@@ -233,6 +233,7 @@ func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
 			"Хмм... Похоже, у вас ещё нет книги в процессе чтения.\n"+
 				"Давайте выберем что-нибудь интересное и погрузимся в новые страницы! 📚✨",
 		)
+		return
 	}
 
 	cd.AddBookToHistory(currentBook)
@@ -243,8 +244,8 @@ func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
 	vb.sendMessage(
 		chatId,
 		fmt.Sprintf(
-			"Ура! Книга %s прочитана! 🎉\n"+
-				"Надеюсь, она оставила вам море впечатлений."+
+			"Ура! Книга \"%s\" прочитана! 🎉\n"+
+				"Надеюсь, она оставила вам море впечатлений.\n"+
 				"Готовы к следующему литературному приключению?",
 			currentBook,
 		),
@@ -490,7 +491,7 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		vb.handleAdd(update.Message)
 	case "current":
 		vb.handleCurrent(update.Message)
-	case "handleCurrentSet":
+	case "current_set":
 		vb.handleCurrentSet(update.Message)
 	case "current_random":
 		vb.handleCurrentRandom(update.Message)
@@ -500,9 +501,9 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		vb.handleRemoveWishlist(update.Message)
 	case "history":
 		vb.handleHistoryList(update.Message)
-	case "history-add":
+	case "history_add":
 		vb.handleAddHistory(update.Message)
-	case "history-remove":
+	case "history_remove":
 		vb.handleRemoveHistory(update.Message)
 	default:
 		vb.sendMessage(update.Message.Chat.ID, "Unknown command")
