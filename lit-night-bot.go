@@ -417,7 +417,7 @@ func (vb *LitNightBot) handleEmptyRemove(message *tgbotapi.Message) {
 	for _, item := range cd.Wishlist {
 		bookname := item.Book.Name
 		button := tgbotapi.NewInlineKeyboardButtonData(
-			TruncateString("❌ "+bookname, 60),
+			"❌ "+bookname,
 			vb.getCallbackParamStr("remove", bookname),
 		)
 
