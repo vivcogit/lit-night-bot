@@ -78,7 +78,6 @@ func (cd *ChatData) RemoveBookFromHistory(bookname string) error {
 
 func (cd *ChatData) AddBooksToWishlist(booknames []string) {
 	for _, bookname := range booknames {
-		// Добавляем каждую книгу в вишлист
 		cd.Wishlist = append(cd.Wishlist, WishlistItem{Book{Name: bookname}})
 	}
 }
@@ -91,6 +90,18 @@ func (cd *ChatData) AddBookToHistory(bookname string) {
 			Date: time.Now(),
 		},
 	)
+}
+
+func (cd *ChatData) AddBooksToHistory(booknames []string) {
+	for _, bookname := range booknames {
+		cd.History = append(
+			cd.History,
+			HistoryItem{
+				Book: Book{Name: bookname},
+				Date: time.Now(),
+			},
+		)
+	}
 }
 
 func (cd *ChatData) SetCurrentBook(bookname string) {

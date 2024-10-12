@@ -324,9 +324,9 @@ func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
 
 func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	bookname := message.CommandArguments()
+	booknames := strings.Split(message.CommandArguments(), "\n")
 
-	if bookname == "" {
+	if len(booknames) == 0 {
 		vb.sendMessage(chatId,
 			"Эй, книжный искатель! 📚✨\n"+
 				"Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде history-add, например:\n/history-add Моя первая книга",
@@ -336,11 +336,17 @@ func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 
 	cd := vb.getChatData(chatId)
 
-	cd.AddBookToHistory(bookname)
+	cd.AddBooksToHistory(booknames)
 
 	vb.setChatData(chatId, cd)
 
-	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в список", bookname))
+	if len(booknames) == 1 {
+		// Если добавлена одна книга
+		vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в историю.", booknames[0]))
+	} else {
+		// Если добавлено несколько книг
+		vb.sendMessage(chatId, fmt.Sprintf("Книги \"%s\" добавлены в историю.", strings.Join(booknames, "\", \"")))
+	}
 }
 
 func (vb *LitNightBot) handleRemoveWishlist(message *tgbotapi.Message) {
