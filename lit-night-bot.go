@@ -176,7 +176,7 @@ func (vb *LitNightBot) handleCurrentSet(message *tgbotapi.Message) {
 	bookname := message.CommandArguments()
 
 	if bookname == "" {
-		vb.sendMessage(chatId, "/current-set <bookname>")
+		vb.sendMessage(chatId, "/current_set <bookname>")
 		return
 	}
 
@@ -413,6 +413,15 @@ func (vb *LitNightBot) handleEmptyRemove(message *tgbotapi.Message) {
 		inlineButtons = append(inlineButtons, inlineRow)
 	}
 
+	button := tgbotapi.NewInlineKeyboardButtonData(
+		"Отмена",
+		GetCallbackParamStr(Cancel, "_"),
+	)
+
+	inlineRow := tgbotapi.NewInlineKeyboardRow(button)
+
+	inlineButtons = append(inlineButtons, inlineRow)
+
 	msg := tgbotapi.NewMessage(chatId, "Вот ваши книги в списке:")
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(inlineButtons...)
@@ -479,7 +488,7 @@ func (vb *LitNightBot) Init() {
 			Description: "просмотр прочитанных",
 		},
 		{
-			Command:     "add_history",
+			Command:     "history_add",
 			Description: "добавить в прочитанные",
 		},
 		{
@@ -502,14 +511,14 @@ func (vb *LitNightBot) Init() {
 			Command:     "current_random",
 			Description: "выбрать рандомом из списка",
 		},
-		{
-			Command:     "current_set",
-			Description: "выбрать книгу вручную",
-		},
 		// {
-		// 	Command:     "current_abort", // спрашивать про удаление или возврат в вишлист
-		// 	Description: "отменить текущую книгу (вернуть в список?)",
+		// 	Command:     "current_set",
+		// 	Description: "выбрать книгу вручную",
 		// },
+		{
+			Command:     "current_abort", // спрашивать про удаление или возврат в вишлист
+			Description: "отменить текущую книгу (вернуть в список?)",
+		},
 		// {
 		// 	Command:     "help",
 		// 	Description: "вывод справки",
