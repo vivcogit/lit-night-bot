@@ -24,6 +24,7 @@ const (
 	UACurrentRandom   UserAction = "current_random"
 	UACurrentAbort    UserAction = "current_abort"
 	UACurrentComplete UserAction = "current_complete"
+	UACurrentDeadline UserAction = "current_deadline"
 	UARemove          UserAction = "remove"
 	UAHistory         UserAction = "history"
 	UAHistoryAdd      UserAction = "history_add"
@@ -97,9 +98,25 @@ func (vb *LitNightBot) moveCurrentBook(chatId int64, messageID int, moveToHistor
 	vb.setChatData(chatId, cd)
 
 	if moveToHistory {
-		vb.editMessage(chatId, messageID, fmt.Sprintf("📖 Книга \"%s\" теперь в истории! Время выбрать новую приключенческую историю! 🚀", currentBookName), nil)
+		vb.editMessage(
+			chatId,
+			messageID,
+			fmt.Sprintf(
+				"📖 Книга \"%s\" теперь в истории!\nВремя выбрать новую приключенческую историю! 🚀",
+				currentBookName,
+			),
+			nil,
+		)
 	} else {
-		vb.editMessage(chatId, messageID, fmt.Sprintf("📝 Книга \"%s\" вернулась в список ожидания! Давайте подберем для вас новую интересную историю! 📚✨", currentBookName), nil)
+		vb.editMessage(
+			chatId,
+			messageID,
+			fmt.Sprintf(
+				"📝 Книга \"%s\" вернулась в список ожидания!\nДавайте подберем для вас новую интересную историю! 📚✨",
+				currentBookName,
+			),
+			nil,
+		)
 	}
 }
 
@@ -209,10 +226,70 @@ func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
 	if cd.Current.Book.Name == "" {
 		msg = "Похоже, у вас пока нет выбранной книги. Как насчёт выбрать что-нибудь интересное для чтения?"
 	} else {
-		msg = fmt.Sprintf("В данный момент вы читаете книгу \"%s\". Как вам она? Делитесь впечатлениями!", cd.Current.Book.Name)
+		msg = fmt.Sprintf(
+			"В данный момент вы читаете книгу \"%s\" 📖\n"+
+				"Как вам она? Делитесь впечатлениями! 😊\n"+
+				"Кстати, у вас назначен дедлайн на %s.\n"+
+				"Надеюсь, до этого времени вы не потеряетесь в мире страниц! 📅😈",
+			cd.Current.Book.Name, cd.Current.Deadline.Format(DATE_LAYOUT))
 	}
 
 	vb.sendMessage(chatId, msg)
+}
+
+const DATE_LAYOUT = "02.01.2006"
+
+func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	cd := vb.getChatData(chatId)
+
+	if cd.Current.Book.UUID == "" {
+		vb.sendMessage(
+			chatId,
+			"Хей-хей! 🚀\n"+
+				"Похоже, мы находимся в параллельной вселенной!\n"+
+				"Устанавливать дедлайн без выбранной книги — это как пытаться запустить ракету без топлива. 🚀💨\n"+
+				"Давайте сначала выберем книгу, а потом уже обсудим, когда будем её читать! Так мы точно не улетим в никуда! 📖✨",
+		)
+		return
+	}
+
+	dateStr := message.CommandArguments()
+
+	date, err := time.Parse(DATE_LAYOUT, dateStr)
+
+	if err != nil {
+		vb.sendMessage(
+			chatId,
+			"Ой-ой, кажется, где-то закралась ошибка! 📅\n"+
+				"Я не смог разобрать дату. Попробуй формат: дд.мм.гггг (например, 11.02.2024).\n"+
+				"Давай ещё раз, я верю в тебя! 💪",
+		)
+		return
+	}
+
+	if date.Before(time.Now()) {
+		vb.sendMessage(
+			chatId,
+			"Ой, похоже вы указали дату из прошлого! 😅\n"+
+				"Мы, конечно, не Док и Марти, чтобы отправляться в прошлое на DeLorean.\n"+
+				"Попробуйте выбрать что-то из будущего — ведь только вперёд, к новым приключениям! 🚀⏳",
+		)
+	}
+
+	cd.SetDeadline(date)
+	vb.setChatData(chatId, cd)
+
+	vb.sendMessage(
+		chatId,
+		fmt.Sprintf(
+			"🌟 Ура! Дедлайн установлен! 🌟\n\n"+
+				"Вы выбрали дату %s для завершения чтения вашей книги. 🕒✨\n"+
+				"Не забывайте, что мы всегда можем изменить его, если ваши планы изменятся!\n\n"+
+				"Давайте сделаем это чтение увлекательным приключением, а не гонкой! 📚💨",
+			date.Format(DATE_LAYOUT),
+		),
+	)
 }
 
 func (vb *LitNightBot) handleCurrentSet(message *tgbotapi.Message) {
@@ -313,13 +390,21 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 		vb.sendProgressJokes(chatId)
 
 		randomIndex := rand.Intn(len(cd.Wishlist))
-
-		cd.SetCurrentBook(cd.Wishlist[randomIndex].Book)
-		cd.RemoveBookFromWishlist(cd.Wishlist[randomIndex].Book.UUID)
+		randomBook := cd.Wishlist[randomIndex].Book
+		cd.SetCurrentBook(randomBook)
+		cd.RemoveBookFromWishlist(randomBook.UUID)
 
 		vb.setChatData(chatId, cd)
 
-		vb.sendMessage(chatId, fmt.Sprintf("Тадааам! Вот ваша книга: \"%s\". Приятного чтения!", cd.Current.Book.Name))
+		vb.sendMessage(chatId,
+			fmt.Sprintf(
+				"Тадааам! Вот ваша книга: \"%s\". Приятного чтения! 📚\n\n"+
+					"И вот вам приятный бонус: я назначил автоматический дедлайн через 2 недели - %s!\n"+
+					"Если хотите изменить его, просто используйте команду установки дедлайна.\n\n"+
+					"Давайте сделаем так, чтобы время не ускользнуло, как в \"Докторе Кто\" — не забывайте о своих путешествиях во времени! 🕰️",
+				randomBook.Name, cd.Current.Deadline.Format(DATE_LAYOUT),
+			),
+		)
 	}()
 }
 
@@ -469,9 +554,9 @@ func (vb *LitNightBot) handleCurrentAbort(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
-	currentBook := cd.Current.Book.Name
+	currentBook := cd.Current.Book
 
-	if cd.Current.Book.Name == "" {
+	if currentBook.Name == "" {
 		vb.sendMessage(
 			chatId,
 			"🚫 Ой-ой! Похоже, у вас нет текущей выбранной книги.\nКак насчет того, чтобы выбрать новую историю? 📚✨",
@@ -479,16 +564,16 @@ func (vb *LitNightBot) handleCurrentAbort(message *tgbotapi.Message) {
 		return
 	}
 
-	msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("🤔 Что делать с отменяемой книгой \"%s\"? Давайте решим это вместе! 🎉", currentBook))
+	msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("🤔 Что делать с отменяемой книгой \"%s\"?\nДавайте решим это вместе! 🎉", currentBook.Name))
 
 	buttons := []tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardButtonData(
 			"❌ Никогда",
-			GetCallbackParamStr(CBCurrentToHistory, currentBook),
+			GetCallbackParamStr(CBCurrentToHistory, currentBook.UUID),
 		),
 		tgbotapi.NewInlineKeyboardButtonData(
 			"🕑 Потом",
-			GetCallbackParamStr(CBCurrentToWishlist, currentBook),
+			GetCallbackParamStr(CBCurrentToWishlist, currentBook.UUID),
 		),
 		tgbotapi.NewInlineKeyboardButtonData(
 			"Отмена",
@@ -534,10 +619,10 @@ func (vb *LitNightBot) Init() {
 			Command:     string(UACurrent),
 			Description: "отобразить текущую книгу",
 		},
-		// {
-		// 	Command:     "current_deadline",
-		// 	Description: "назначить срок дедлайна по текущей книге с опциональным напоминанием",
-		// },
+		{
+			Command:     "current_deadline",
+			Description: "назначить срок дедлайна по текущей книге с опциональным напоминанием",
+		},
 		{
 			Command:     string(UACurrentComplete),
 			Description: "пометить книгу прочитанной",
@@ -581,6 +666,8 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 		vb.handleCurrentAbort(update.Message)
 	case UACurrentComplete:
 		vb.handleCurrentComplete(update.Message)
+	case UACurrentDeadline:
+		vb.handleCurrentDeadline(update.Message)
 	case UARemove:
 		vb.handleRemoveFromWishlist(update.Message)
 	case UAHistory:

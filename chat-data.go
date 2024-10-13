@@ -30,7 +30,8 @@ type WishlistItem struct {
 }
 
 type CurrentBook struct {
-	Book Book `json:"book"`
+	Book     Book      `json:"book"`
+	Deadline time.Time `json:"deadline"`
 }
 
 type ChatData struct {
@@ -118,7 +119,11 @@ func (cd *ChatData) AddBooksToHistory(booknames []string) {
 }
 
 func (cd *ChatData) SetCurrentBook(book Book) {
-	cd.Current = CurrentBook{book}
+	cd.Current = CurrentBook{book, time.Now().Add(2 * 7 * 24 * time.Hour)}
+}
+
+func (cd *ChatData) SetDeadline(deadline time.Time) {
+	cd.Current.Deadline = deadline
 }
 
 func (cd *ChatData) GetWishlistBooks() []string {
