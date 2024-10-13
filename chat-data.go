@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 	"time"
 
@@ -65,7 +65,7 @@ func RemoveBookFromBooklist[T HasBook](booklist *[]T, UUID string) (*Book, error
 	}
 
 	if index == -1 {
-		return nil, fmt.Errorf("книга \"%s\" не найдена в списке", UUID)
+		return nil, errors.New("книга не найдена в списке")
 	}
 
 	book := (*booklist)[index].GetBook()
