@@ -4,10 +4,20 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Book struct {
 	Name string `json:"name"`
+	UUID string `json:"uuid"`
+}
+
+func NewBook(name string) Book {
+	return Book{
+		name,
+		getUuid(),
+	}
 }
 
 type HistoryItem struct {
@@ -33,6 +43,10 @@ type HasBook interface {
 	GetBook() Book
 }
 
+func getUuid() string {
+	return uuid.New().String()[:8]
+}
+
 func (wi WishlistItem) GetBook() Book {
 	return wi.Book
 }
@@ -41,22 +55,23 @@ func (hi HistoryItem) GetBook() Book {
 	return hi.Book
 }
 
-func RemoveBookFromBooklist[T HasBook](booklist *[]T, bookname string) error {
+func RemoveBookFromBooklist[T HasBook](booklist *[]T, UUID string) (*Book, error) {
 	index := -1
 	for i, b := range *booklist {
-		if strings.EqualFold(b.GetBook().Name, bookname) {
+		if strings.EqualFold(b.GetBook().UUID, UUID) {
 			index = i
 			break
 		}
 	}
 
 	if index == -1 {
-		return fmt.Errorf("книга \"%s\" не найдена в списке", bookname)
+		return nil, fmt.Errorf("книга \"%s\" не найдена в списке", UUID)
 	}
 
+	book := (*booklist)[index].GetBook()
 	*booklist = append((*booklist)[:index], (*booklist)[index+1:]...)
 
-	return nil
+	return &book, nil
 }
 
 func GetBooknamesFromBooklist[T HasBook](booklist *[]T) []string {
@@ -68,12 +83,12 @@ func GetBooknamesFromBooklist[T HasBook](booklist *[]T) []string {
 	return names
 }
 
-func (cd *ChatData) RemoveBookFromWishlist(bookname string) error {
-	return RemoveBookFromBooklist(&cd.Wishlist, bookname)
+func (cd *ChatData) RemoveBookFromWishlist(uuid string) (*Book, error) {
+	return RemoveBookFromBooklist(&cd.Wishlist, uuid)
 }
 
-func (cd *ChatData) RemoveBookFromHistory(bookname string) error {
-	return RemoveBookFromBooklist(&cd.History, bookname)
+func (cd *ChatData) RemoveBookFromHistory(uuid string) (*Book, error) {
+	return RemoveBookFromBooklist(&cd.History, uuid)
 }
 
 func (cd *ChatData) AddBooksToWishlist(booknames []string) {
@@ -83,14 +98,14 @@ func (cd *ChatData) AddBooksToWishlist(booknames []string) {
 }
 
 func (cd *ChatData) AddBookToWishlist(bookname string) {
-	cd.Wishlist = append(cd.Wishlist, WishlistItem{Book{Name: bookname}})
+	cd.Wishlist = append(cd.Wishlist, WishlistItem{NewBook(bookname)})
 }
 
 func (cd *ChatData) AddBookToHistory(bookname string) {
 	cd.History = append(
 		cd.History,
 		HistoryItem{
-			Book: Book{Name: bookname},
+			Book: NewBook(bookname),
 			Date: time.Now(),
 		},
 	)
@@ -102,8 +117,8 @@ func (cd *ChatData) AddBooksToHistory(booknames []string) {
 	}
 }
 
-func (cd *ChatData) SetCurrentBook(bookname string) {
-	cd.Current = CurrentBook{Book{bookname}}
+func (cd *ChatData) SetCurrentBook(book Book) {
+	cd.Current = CurrentBook{book}
 }
 
 func (cd *ChatData) GetWishlistBooks() []string {

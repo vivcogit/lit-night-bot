@@ -8,10 +8,10 @@ import (
 type CallbackAction string
 
 const (
-	Remove            CallbackAction = "remove"
-	Cancel            CallbackAction = "cancel"
-	CurrentToWishlist CallbackAction = "cur2wish"
-	CurrentToHistory  CallbackAction = "cur2his"
+	CBRemove            CallbackAction = "remove"
+	CBCancel            CallbackAction = "cancel"
+	CBCurrentToWishlist CallbackAction = "cur2wish"
+	CBCurrentToHistory  CallbackAction = "cur2his"
 )
 
 func GetCallbackParamStr(action CallbackAction, data string) string {
@@ -27,7 +27,7 @@ func GetCallbackParam(callbackData string) (CallbackAction, string, error) {
 
 	ca := CallbackAction(cb[0])
 	switch ca {
-	case Remove, Cancel, CurrentToWishlist, CurrentToHistory:
+	case CBRemove, CBCancel, CBCurrentToWishlist, CBCurrentToHistory:
 		return ca, cb[1], nil
 	}
 
