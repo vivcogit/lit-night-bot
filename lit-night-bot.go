@@ -129,6 +129,7 @@ func (vb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
 	}
 
 	chatId := update.CallbackQuery.Message.Chat.ID
+	messageId := update.CallbackQuery.Message.MessageID
 
 	switch cbAction {
 	case CBRemove:
@@ -148,8 +149,15 @@ func (vb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
 		vb.bot.Send(callbackConfig)
 
 		text, buttons := getCleanWishlistMessage(cd)
-		vb.editMessage(chatId, update.CallbackQuery.Message.MessageID, text, buttons)
+		vb.editMessage(chatId, messageId, text, buttons)
 		return
+	case CBRemovePage:
+		page, err := strconv.Atoi(cbParam)
+		if err != nil {
+			vb.sendMessage(chatId, "Ошибка обработки страницы")
+			return
+		}
+		vb.showRemoveWishlistPage(chatId, messageId, page)
 
 	case CBCancel:
 		vb.editMessage(chatId, update.CallbackQuery.Message.MessageID, "🤭 Упс! Вы отменили действие! Не переживайте, в следующий раз все получится! 😉", nil)
@@ -419,18 +427,6 @@ func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
 
 	cd := vb.getChatData(chatId)
 
-	if len(cd.Wishlist) >= 9 {
-		vb.sendMessage(chatId,
-			"Ой-ой! Похоже, ваш вишлист уже полон книг! 📚✨\nЧтобы добавить новую, давайте попрощаемся с одной из них.")
-		return
-	}
-
-	if len(cd.Wishlist)+len(booknames) >= 9 {
-		vb.sendMessage(chatId,
-			"Ой-ой! Похоже, я не смогу запомнить столько книг! 📚✨\nЧтобы добавить новые, давайте попрощаемся с кем-то из старых.")
-		return
-	}
-
 	cd.AddBooksToWishlist(booknames)
 
 	vb.setChatData(chatId, cd)
@@ -535,19 +531,61 @@ func getCleanWishlistMessage(cd *ChatData) (string, [][]tgbotapi.InlineKeyboardB
 	return "Вот ваши книги в списке:", buttons
 }
 
+const BooksPerPage = 5
+
 func (vb *LitNightBot) handleRemoveFromWishlist(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
+	vb.showRemoveWishlistPage(chatId, -1, 0)
+}
+
+func (vb *LitNightBot) showRemoveWishlistPage(chatId int64, messageID int, page int) {
 	cd := vb.getChatData(chatId)
+	books := cd.GetWishlistBooks()
 
-	text, buttons := getCleanWishlistMessage(cd)
-
-	msg := tgbotapi.NewMessage(chatId, text)
-
-	if len(buttons) > 0 {
-		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(buttons...)
+	if len(books) == 0 {
+		vb.sendMessage(chatId, "Ваш вишлист пуст, нечего удалять. Добавьте новые книги для удаления.")
+		return
 	}
 
-	vb.bot.Send(msg)
+	start := page * BooksPerPage
+	end := start + BooksPerPage
+	if end > len(books) {
+		end = len(books)
+	}
+
+	booksOnPage := books[start:end]
+	messageText := fmt.Sprintf("🗑️ Удаление книг (страница %d):\n\n", page+1)
+	var buttons [][]tgbotapi.InlineKeyboardButton
+	for i, book := range booksOnPage {
+		button := tgbotapi.NewInlineKeyboardButtonData(
+			book,
+			GetCallbackParamStr(CBRemove, strconv.Itoa(start+i)),
+		)
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(button))
+	}
+
+	var navButtons []tgbotapi.InlineKeyboardButton
+	if start > 0 {
+		navButtons = append(navButtons, tgbotapi.NewInlineKeyboardButtonData("⬅ Назад", GetCallbackParamStr(CBRemovePage, strconv.Itoa(page-1))))
+	}
+	if end < len(books) {
+		navButtons = append(navButtons, tgbotapi.NewInlineKeyboardButtonData("Вперед ➡", GetCallbackParamStr(CBRemovePage, strconv.Itoa(page+1))))
+	}
+
+	if len(navButtons) > 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(navButtons...))
+	}
+
+	if messageID == -1 {
+		msg := tgbotapi.NewMessage(chatId, messageText)
+		if len(buttons) > 0 {
+			msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(buttons...)
+		}
+
+		vb.bot.Send(msg)
+	} else {
+		vb.editMessage(chatId, messageID, messageText, buttons)
+	}
 }
 
 func (vb *LitNightBot) handleCurrentAbort(message *tgbotapi.Message) {

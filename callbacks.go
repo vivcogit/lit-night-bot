@@ -9,6 +9,7 @@ type CallbackAction string
 
 const (
 	CBRemove            CallbackAction = "remove"
+	CBRemovePage        CallbackAction = "remove_page"
 	CBCancel            CallbackAction = "cancel"
 	CBCurrentToWishlist CallbackAction = "cur2wish"
 	CBCurrentToHistory  CallbackAction = "cur2his"
@@ -27,7 +28,7 @@ func GetCallbackParam(callbackData string) (CallbackAction, string, error) {
 
 	ca := CallbackAction(cb[0])
 	switch ca {
-	case CBRemove, CBCancel, CBCurrentToWishlist, CBCurrentToHistory:
+	case CBRemove, CBCancel, CBCurrentToWishlist, CBCurrentToHistory, CBRemovePage:
 		return ca, cb[1], nil
 	}
 
