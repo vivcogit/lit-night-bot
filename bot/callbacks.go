@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -20,28 +19,18 @@ const (
 	CBCurrentToHistory  CallbackAction = "cur2his"
 )
 
-func GetCallbackParamStr(action CallbackAction, data string) string {
-	return string(action) + ":" + data
+func GetCallbackParamStr(action CallbackAction, params ...string) string {
+	return string(action) + callbackParamsDelimeter + strings.Join(params, callbackParamsDelimeter)
 }
 
-func GetCallbackParam(callbackData string) (CallbackAction, string, error) {
-	cb := strings.Split(callbackData, ":")
+func GetCallbackParam(callbackData string) (CallbackAction, []string, error) {
+	cb := strings.Split(callbackData, callbackParamsDelimeter)
 
-	if len(cb) != 2 {
-		return "", "", errors.New("Неизвестная операция: " + callbackData)
-	}
-
-	ca := CallbackAction(cb[0])
-	switch ca {
-	case CBRemove, CBCancel, CBCurrentToWishlist, CBCurrentToHistory, CBRemovePage:
-		return ca, cb[1], nil
-	}
-
-	return "", "", errors.New("Неизвестное действие: " + callbackData)
+	return CallbackAction(cb[0]), cb[1:], nil
 }
 
 func (vb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
-	cbAction, cbParam, err := GetCallbackParam(update.CallbackQuery.Data)
+	cbAction, cbParams, err := GetCallbackParam(update.CallbackQuery.Data)
 
 	if err != nil {
 		fmt.Println(err.Error())
@@ -54,11 +43,11 @@ func (vb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
 	switch cbAction {
 	case CBRemove:
 		cd := vb.getChatData(chatId)
-		_, err := cd.RemoveBookFromWishlist(cbParam)
+		_, err := cd.RemoveBookFromWishlist(cbParams[0])
 		vb.setChatData(chatId, cd)
 
 		if err != nil {
-			vb.sendMessage(chatId, err.Error())
+			vb.sendMessage(chatId, err.Error(), nil)
 			return
 		}
 
@@ -68,13 +57,13 @@ func (vb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
 		)
 		vb.bot.Send(callbackConfig)
 
-		text, buttons := getCleanWishlistMessage(cd)
-		vb.editMessage(chatId, messageId, text, buttons)
+		page, _ := strconv.Atoi(cbParams[1])
+		vb.showRemoveWishlistPage(chatId, messageId, page)
 		return
 	case CBRemovePage:
-		page, err := strconv.Atoi(cbParam)
+		page, err := strconv.Atoi(cbParams[0])
 		if err != nil {
-			vb.sendMessage(chatId, "Ошибка обработки страницы")
+			vb.sendMessage(chatId, "Ошибка обработки страницы", nil)
 			return
 		}
 		vb.showRemoveWishlistPage(chatId, messageId, page)

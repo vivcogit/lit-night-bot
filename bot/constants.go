@@ -4,6 +4,10 @@ const BooksPerPage = 5
 
 const DATE_LAYOUT = "02.01.2006"
 
+const removePrefix = "❌"
+
+const callbackParamsDelimeter = ":"
+
 var ProgressJokes = []string{
 	"Думаю... думаю... кажется, нашел книгу, которая смотрит на меня в ответ!",
 	"Дайте мне пару секунд, книги устраивают бой за ваше внимание!",

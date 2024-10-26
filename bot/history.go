@@ -16,6 +16,7 @@ func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 		vb.sendMessage(chatId,
 			"Эй, книжный искатель! 📚✨\n"+
 				"Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде history-add, например:\n/history-add Моя первая книга",
+			nil,
 		)
 		return
 	}
@@ -27,9 +28,9 @@ func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 	vb.setChatData(chatId, cd)
 
 	if len(booknames) == 1 {
-		vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в историю.", booknames[0]))
+		vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в историю.", booknames[0]), nil)
 	} else {
-		vb.sendMessage(chatId, fmt.Sprintf("Книги \"%s\" добавлены в историю.", strings.Join(booknames, "\", \"")))
+		vb.sendMessage(chatId, fmt.Sprintf("Книги \"%s\" добавлены в историю.", strings.Join(booknames, "\", \"")), nil)
 	}
 }
 
@@ -41,6 +42,7 @@ func (vb *LitNightBot) handleRemoveHistory(message *tgbotapi.Message) {
 		vb.sendMessage(chatId,
 			"Чтобы удалить книгу из истории нужно сказать мне её название: /history_remove Название книги\n"+
 				"Таков путь!",
+			nil,
 		)
 		return
 	}
@@ -54,11 +56,11 @@ func (vb *LitNightBot) removeBookFromHistory(chatId int64, uuid string) {
 	vb.setChatData(chatId, cd)
 
 	if err != nil {
-		vb.sendMessage(chatId, err.Error())
+		vb.sendMessage(chatId, err.Error(), nil)
 		return
 	}
 
-	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" удалена из списка", book.Name))
+	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" удалена из списка", book.Name), nil)
 }
 
 func (vb *LitNightBot) handleHistoryList(message *tgbotapi.Message) {
@@ -71,9 +73,14 @@ func (vb *LitNightBot) handleHistoryList(message *tgbotapi.Message) {
 		vb.sendMessage(chatId,
 			"Кажется, список прочитанных книг пока пуст... 😕\n"+
 				"Но не переживайте! Начните прямо сейчас, и скоро здесь будут ваши книжные достижения! 📚💪",
+			nil,
 		)
 		return
 	}
 
-	vb.sendMessage(chatId, "Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\nОтличная работа! 👏📖")
+	vb.sendMessage(
+		chatId,
+		"Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\nОтличная работа! 👏📖",
+		nil,
+	)
 }

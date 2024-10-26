@@ -49,6 +49,7 @@ func (vb *LitNightBot) handleStart(message *tgbotapi.Message) {
 			"📚 Теперь вы можете легко управлять списками книг, "+
 			"выбирать следующую для чтения и не забывать, что уже обсуждали.\n"+
 			"Давайте сделаем чтение ещё увлекательнее вместе!",
+		nil,
 	)
 }
 
@@ -116,7 +117,7 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 	case UAStart:
 		vb.handleStart(update.Message)
 	case UAList:
-		vb.handleWishlist(update.Message)
+		vb.handleShowWishlist(update.Message)
 	case UAAdd: // TODO сохранять добавителя
 		vb.handleAdd(update.Message)
 	case UACurrent:
@@ -140,7 +141,7 @@ func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
 	case UAHistoryRemove:
 		vb.handleRemoveHistory(update.Message)
 	default:
-		vb.sendMessage(update.Message.Chat.ID, "Unknown command")
+		vb.sendMessage(update.Message.Chat.ID, "Упс, неизвестная команда, попробуем ещё раз?", nil)
 	}
 }
 
