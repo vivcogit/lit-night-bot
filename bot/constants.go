@@ -1,4 +1,8 @@
-package main
+package bot
+
+const BooksPerPage = 5
+
+const DATE_LAYOUT = "02.01.2006"
 
 var ProgressJokes = []string{
 	"Думаю... думаю... кажется, нашел книгу, которая смотрит на меня в ответ!",
