@@ -3,14 +3,15 @@ package bot
 import (
 	"fmt"
 	"lit-night-bot/utils"
+	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
+func (vb *LitNightBot) handleHistoryAddBook(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	booknames := utils.CleanStrSlice(strings.Split(message.CommandArguments(), "\n"))
+	booknames := utils.CleanStrSlice(strings.Split(message.Text, "\n"))
 
 	if len(booknames) == 0 {
 		vb.sendMessage(chatId,
@@ -34,25 +35,11 @@ func (vb *LitNightBot) handleAddHistory(message *tgbotapi.Message) {
 	}
 }
 
-func (vb *LitNightBot) handleRemoveHistory(message *tgbotapi.Message) {
+func (vb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string) {
 	chatId := message.Chat.ID
-	bookname := message.CommandArguments()
 
-	if bookname == "" {
-		vb.sendMessage(chatId,
-			"Чтобы удалить книгу из истории нужно сказать мне её название: /history_remove Название книги\n"+
-				"Таков путь!",
-			nil,
-		)
-		return
-	}
-
-	vb.removeBookFromHistory(chatId, bookname)
-}
-
-func (vb *LitNightBot) removeBookFromHistory(chatId int64, uuid string) {
 	cd := vb.getChatData(chatId)
-	book, err := cd.RemoveBookFromHistory(uuid)
+	_, err := cd.RemoveBookFromWishlist(cbParams[0])
 	vb.setChatData(chatId, cd)
 
 	if err != nil {
@@ -60,10 +47,17 @@ func (vb *LitNightBot) removeBookFromHistory(chatId int64, uuid string) {
 		return
 	}
 
-	vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" удалена из списка", book.Name), nil)
+	callbackConfig := tgbotapi.NewCallback(
+		cbId,
+		"🎉 Ура! Книга удалена из вашего списка желаемого! Теперь у вас больше времени для выбора новой! 📚",
+	)
+	vb.bot.Send(callbackConfig)
+
+	page, _ := strconv.Atoi(cbParams[1])
+	vb.showCleanHistoryPage(chatId, message.MessageID, page)
 }
 
-func (vb *LitNightBot) handleHistoryList(message *tgbotapi.Message) {
+func (vb *LitNightBot) handleHistoryShow(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
@@ -83,4 +77,41 @@ func (vb *LitNightBot) handleHistoryList(message *tgbotapi.Message) {
 		"Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\nОтличная работа! 👏📖",
 		nil,
 	)
+}
+
+func (vb *LitNightBot) handleCleanHistory(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+	vb.showCleanHistoryPage(chatId, -1, 0)
+}
+
+func (vb *LitNightBot) GetCleanHistoryMessage(chatId int64, messageID int, page int) (string, [][]tgbotapi.InlineKeyboardButton) {
+	cd := vb.getChatData(chatId)
+
+	if len(cd.History) == 0 {
+		return "Кажется, список прочитанных книг пока пуст... 😕\n", nil
+	}
+
+	booksOnPage, page, isLast := GetBooklistPage(&cd.History, page)
+
+	buttons := GetCleanBooklistButtons(&booksOnPage, page, CBWishlistRemoveBook)
+
+	navButtons := GetPaginationNavButtons(page, isLast, CBHistoryChangePage)
+
+	if len(*navButtons) > 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(*navButtons...))
+	}
+
+	messageText := fmt.Sprintf("🗑️ Удаление из истории (страница %d):\n\n", page+1)
+
+	return messageText, buttons
+}
+
+func (vb *LitNightBot) showCleanHistoryPage(chatId int64, messageID int, page int) {
+	messageText, buttons := vb.GetCleanHistoryMessage(chatId, messageID, page)
+
+	if messageID == -1 {
+		vb.sendMessage(chatId, messageText, buttons)
+	} else {
+		vb.editMessage(chatId, messageID, messageText, buttons)
+	}
 }

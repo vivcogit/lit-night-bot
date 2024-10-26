@@ -16,7 +16,7 @@ func GetBot() *bot.LitNightBot {
 		panic("failed to retrieve path to storage chats data")
 	}
 
-	bot, err := bot.NewLitNightBot(token, dataPath, false)
+	bot, err := bot.NewLitNightBot(token, dataPath, true)
 
 	if err != nil {
 		panic(err)

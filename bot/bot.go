@@ -25,8 +25,13 @@ func (vb *LitNightBot) Start() {
 			continue
 		}
 
-		if update.Message != nil {
-			vb.handleMessage(&update)
+		if update.Message != nil && update.Message.IsCommand() {
+			vb.handleCommand(&update)
+			continue
+		}
+
+		if update.Message != nil && update.Message.ReplyToMessage != nil {
+			vb.handleReply(&update)
 			continue
 		}
 	}
@@ -56,92 +61,14 @@ func (vb *LitNightBot) handleStart(message *tgbotapi.Message) {
 func (vb *LitNightBot) InitMenu() {
 	commands := []tgbotapi.BotCommand{
 		{
-			Command:     string(UAList),
-			Description: "просмотр списка",
-		},
-		{
-			Command:     string(UAAdd),
-			Description: "добавление книг в список, мультидобавление по строкам",
-		},
-		{
-			Command:     string(UARemove),
-			Description: "удаление из списка",
-		},
-		{
-			Command:     string(UAHistory),
-			Description: "просмотр прочитанных",
-		},
-		{
-			Command:     string(UAHistoryAdd),
-			Description: "добавить в прочитанные",
-		},
-		{
-			Command:     string(UAHistoryRemove),
-			Description: "удалить из прочитанных",
-		},
-		{
-			Command:     string(UACurrent),
-			Description: "отобразить текущую книгу",
-		},
-		{
-			Command:     string(UACurrentDeadline),
-			Description: "назначить срок дедлайна по текущей книге с опциональным напоминанием",
-		},
-		{
-			Command:     string(UACurrentComplete),
-			Description: "пометить книгу прочитанной",
-		},
-		{
-			Command:     string(UACurrentRandom),
-			Description: "выбрать рандомом из списка",
-		},
-		{
-			Command:     string(UACurrentAbort),
-			Description: "отменить выбор книги",
+			Command:     string(CmdMenu),
+			Description: "показать меню",
 		},
 	}
 
 	_, err := vb.bot.Request(tgbotapi.NewSetMyCommands(commands...))
 	if err != nil {
 		log.Panic(err)
-	}
-}
-
-func (vb *LitNightBot) handleMessage(update *tgbotapi.Update) {
-	if !update.Message.IsCommand() {
-		return
-	}
-
-	cmd := UserAction(update.Message.Command())
-	switch cmd {
-	case UAStart:
-		vb.handleStart(update.Message)
-	case UAList:
-		vb.handleShowWishlist(update.Message)
-	case UAAdd: // TODO сохранять добавителя
-		vb.handleAdd(update.Message)
-	case UACurrent:
-		vb.handleCurrent(update.Message)
-	case UACurrentSet: // TODO remove?
-		vb.handleCurrentSet(update.Message)
-	case UACurrentRandom:
-		vb.handleCurrentRandom(update.Message)
-	case UACurrentAbort:
-		vb.handleCurrentAbort(update.Message)
-	case UACurrentComplete:
-		vb.handleCurrentComplete(update.Message)
-	case UACurrentDeadline:
-		vb.handleCurrentDeadline(update.Message)
-	case UARemove:
-		vb.handleRemoveFromWishlist(update.Message)
-	case UAHistory:
-		vb.handleHistoryList(update.Message)
-	case UAHistoryAdd:
-		vb.handleAddHistory(update.Message)
-	case UAHistoryRemove:
-		vb.handleRemoveHistory(update.Message)
-	default:
-		vb.sendMessage(update.Message.Chat.ID, "Упс, неизвестная команда, попробуем ещё раз?", nil)
 	}
 }
 

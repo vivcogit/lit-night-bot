@@ -37,6 +37,11 @@ func (vb *LitNightBot) editMessage(chatId int64, msgID int, text string, buttons
 	return vb.bot.Send(editMsg)
 }
 
+func (vb *LitNightBot) removeMessage(chatId int64, msgId int) (tgbotapi.Message, error) {
+	msg := tgbotapi.NewDeleteMessage(chatId, msgId)
+	return vb.bot.Send(msg)
+}
+
 func (vb *LitNightBot) sendMessage(chatId int64, text string, buttons [][]tgbotapi.InlineKeyboardButton) (tgbotapi.Message, error) {
 	msg := tgbotapi.NewMessage(chatId, text)
 	if len(buttons) > 0 {

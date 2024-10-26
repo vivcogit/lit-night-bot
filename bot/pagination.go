@@ -20,7 +20,7 @@ func GetPaginationNavButtons(page int, isLast bool, callbackAction CallbackActio
 
 	navButtons = append(navButtons,
 		tgbotapi.NewInlineKeyboardButtonData(
-			"Отмена",
+			"Завершить",
 			GetCallbackParamStr(CBCancel),
 		),
 	)

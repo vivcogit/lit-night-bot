@@ -3,8 +3,6 @@ package bot
 import (
 	"fmt"
 	chatdata "lit-night-bot/chat-data"
-	"lit-night-bot/utils"
-	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -31,25 +29,39 @@ func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
 	vb.sendMessage(chatId, msg, nil)
 }
 
+func (vb *LitNightBot) handleCurrentDeadlineNoBook(chatId int64) {
+	vb.sendMessage(
+		chatId,
+		"Хей-хей! 🚀\n"+
+			"Похоже, мы находимся в параллельной вселенной!\n"+
+			"Устанавливать дедлайн без выбранной книги — это как пытаться запустить ракету без топлива. 🚀💨\n"+
+			"Давайте сначала выберем книгу, а потом уже обсудим, когда будем её читать! Так мы точно не улетим в никуда! 📖✨",
+		nil,
+	)
+}
+
+func (vb *LitNightBot) handleCurrentDeadlineRequest(message *tgbotapi.Message) {
+	chatId := message.Chat.ID
+
+	cd := vb.getChatData(chatId)
+	if cd.Current.Book.UUID == "" {
+		vb.handleCurrentDeadlineNoBook(chatId)
+		return
+	}
+
+	vb.sendMessage(chatId, setDeadlineRequestMessage, nil)
+}
+
 func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	cd := vb.getChatData(chatId)
 
 	if cd.Current.Book.UUID == "" {
-		vb.sendMessage(
-			chatId,
-			"Хей-хей! 🚀\n"+
-				"Похоже, мы находимся в параллельной вселенной!\n"+
-				"Устанавливать дедлайн без выбранной книги — это как пытаться запустить ракету без топлива. 🚀💨\n"+
-				"Давайте сначала выберем книгу, а потом уже обсудим, когда будем её читать! Так мы точно не улетим в никуда! 📖✨",
-			nil,
-		)
+		vb.handleCurrentDeadlineNoBook(chatId)
 		return
 	}
 
-	dateStr := message.CommandArguments()
-
-	date, err := time.Parse(DATE_LAYOUT, dateStr)
+	date, err := time.Parse(DATE_LAYOUT, message.Text)
 
 	if err != nil {
 		vb.sendMessage(
@@ -86,50 +98,6 @@ func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
 		),
 		nil,
 	)
-}
-
-func (vb *LitNightBot) handleCurrentSet(message *tgbotapi.Message) {
-	chatId := message.Chat.ID
-	vb.sendMessage(chatId, "Извиняюсь, но функционал пока в разработке. Stay tuned как грится", nil)
-	// bookname := message.CommandArguments()
-
-	// if bookname == "" {
-	// 	vb.sendMessage(chatId, "/current_set <bookname>")
-	// 	return
-	// }
-
-	// cd := vb.getChatData(chatId)
-
-	// if cd.Current.Book.Name != "" {
-	// 	vb.sendMessage(chatId,
-	// 		fmt.Sprintf("О, кажется, вы уже читаете \"%s\"! 📖\n"+
-	// 			"Может, сначала завершим эту книгу, прежде чем начать новое приключение? 😉",
-	// 			cd.Current.Book.Name,
-	// 		))
-	// 	return
-	// }
-
-	// book, err := cd.RemoveBookFromWishlist(bookname)
-	// cd.SetCurrentBook(bookname)
-	// vb.setChatData(chatId, cd)
-
-	// if err != nil && len(cd.Wishlist) > 0 {
-	// 	vb.sendMessage(
-	// 		chatId,
-	// 		"Кажется, выбранная вами книга не из вашего вишлиста. 📚\n"+
-	// 			"Может, в следующий раз стоит выбрать что-то из списка желаемого чтения? 😄",
-	// 	)
-	// 	return
-	// }
-
-	// vb.sendMessage(
-	// 	chatId,
-	// 	fmt.Sprintf(
-	// 		"Отличный выбор! Теперь ваша новая книга для чтения — \"%s\". 📚✨\n"+
-	// 			"Удачного чтения, и не забудьте вернуться для обсуждения! 😉",
-	// 		bookname,
-	// 	),
-	// )
 }
 
 func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
@@ -281,34 +249,4 @@ func (vb *LitNightBot) moveCurrentBook(chatId int64, messageID int, moveToHistor
 			nil,
 		)
 	}
-}
-
-func (vb *LitNightBot) handleAdd(message *tgbotapi.Message) {
-	chatId := message.Chat.ID
-	booknames := utils.CleanStrSlice(strings.Split(message.CommandArguments(), "\n"))
-
-	if len(booknames) == 0 {
-		vb.sendMessage(
-			chatId,
-			"Эй, книжный искатель! "+
-				"📚✨ Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде add, например:\n/add Моя первая книга",
-			nil,
-		)
-		return
-	}
-
-	cd := vb.getChatData(chatId)
-
-	cd.AddBooksToWishlist(booknames)
-
-	vb.setChatData(chatId, cd)
-
-	var textMessage string
-	if len(booknames) == 1 {
-		textMessage = fmt.Sprintf("Книга \"%s\" добавлена.", booknames[0])
-	} else {
-		textMessage = fmt.Sprintf("Книги \"%s\" добавлены.", strings.Join(booknames, "\", \""))
-	}
-
-	vb.sendMessage(chatId, textMessage, nil)
 }
