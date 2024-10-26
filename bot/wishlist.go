@@ -17,7 +17,7 @@ func (vb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, cbId 
 	vb.setChatData(chatId, cd)
 
 	if err != nil {
-		vb.sendMessage(chatId, err.Error(), nil)
+		vb.sendPlainMessage(chatId, err.Error())
 		return
 	}
 
@@ -36,19 +36,17 @@ func (vb *LitNightBot) handleShowWishlist(message *tgbotapi.Message) {
 	cd := vb.getChatData(chatId)
 
 	if len(cd.Wishlist) == 0 {
-		vb.sendMessage(
+		vb.sendPlainMessage(
 			chatId,
 			"Все книги из очереди уже прочитаны, и сейчас список пуст.\n"+
 				"Самое время добавить новые книги и продолжить наши литературные приключения!",
-			nil,
 		)
 		return
 	}
 
-	vb.sendMessage(
+	vb.sendPlainMessage(
 		chatId,
 		"📚 Ваши книги в вишлисте:\n\n"+GetBooklistString(&cd.Wishlist),
-		nil,
 	)
 }
 
@@ -57,7 +55,7 @@ func (vb *LitNightBot) handleWishlistClean(message *tgbotapi.Message) {
 }
 
 func (vb *LitNightBot) handleWishlistAddRequest(message *tgbotapi.Message) {
-	vb.sendMessage(message.Chat.ID, addBooksToWishlistRequestMessage, nil)
+	vb.sendPlainMessage(message.Chat.ID, addBooksToWishlistRequestMessage)
 }
 
 func (vb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message) {
@@ -77,7 +75,7 @@ func (vb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message) {
 		textMessage = fmt.Sprintf("Книги \"%s\" добавлены.", strings.Join(booknames, "\", \""))
 	}
 
-	vb.sendMessage(chatId, textMessage, nil)
+	vb.sendPlainMessage(chatId, textMessage)
 }
 
 func (vb *LitNightBot) getCleanWishlistMessage(chatId int64, page int) (string, [][]tgbotapi.InlineKeyboardButton) {
@@ -106,7 +104,7 @@ func (vb *LitNightBot) showCleanWishlistPage(chatId int64, messageID int, page i
 	messageText, buttons := vb.getCleanWishlistMessage(chatId, page)
 
 	if messageID == -1 {
-		vb.sendMessage(chatId, messageText, buttons)
+		vb.sendMessage(chatId, SendMessageParams{text: messageText, buttons: buttons})
 	} else {
 		vb.editMessage(chatId, messageID, messageText, buttons)
 	}

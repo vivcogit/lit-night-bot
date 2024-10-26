@@ -17,7 +17,7 @@ func (vb *LitNightBot) sendProgressJokes(chatId int64) {
 	})
 
 	for i := 0; i < numMessages; i++ {
-		vb.sendMessage(chatId, ProgressJokes[i], nil)
+		vb.sendPlainMessage(chatId, ProgressJokes[i])
 
 		sleepDuration := time.Duration(rand.Intn(1000)+1000) * time.Millisecond
 		time.Sleep(sleepDuration)
@@ -42,10 +42,25 @@ func (vb *LitNightBot) removeMessage(chatId int64, msgId int) (tgbotapi.Message,
 	return vb.bot.Send(msg)
 }
 
-func (vb *LitNightBot) sendMessage(chatId int64, text string, buttons [][]tgbotapi.InlineKeyboardButton) (tgbotapi.Message, error) {
-	msg := tgbotapi.NewMessage(chatId, text)
-	if len(buttons) > 0 {
-		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(buttons...)
+type SendMessageParams struct {
+	text    string
+	buttons [][]tgbotapi.InlineKeyboardButton
+	replyTo int
+}
+
+func (vb *LitNightBot) sendPlainMessage(chatId int64, text string) (tgbotapi.Message, error) {
+	return vb.sendMessage(chatId, SendMessageParams{text: text})
+}
+
+func (vb *LitNightBot) sendMessage(chatId int64, params SendMessageParams) (tgbotapi.Message, error) {
+	msg := tgbotapi.NewMessage(chatId, params.text)
+
+	if len(params.buttons) > 0 {
+		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(params.buttons...)
+	}
+
+	if params.replyTo != 0 {
+		msg.ReplyToMessageID = params.replyTo
 	}
 
 	return vb.bot.Send(msg)

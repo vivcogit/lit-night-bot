@@ -23,6 +23,6 @@ func (vb *LitNightBot) handleCommand(update *tgbotapi.Update) {
 		vb.handleHistoryAddBook(message)
 
 	default:
-		vb.sendMessage(update.Message.Chat.ID, "Упс, неизвестная команда, попробуем ещё раз?", nil)
+		vb.sendPlainMessage(update.Message.Chat.ID, "Упс, неизвестная команда, попробуем ещё раз?")
 	}
 }

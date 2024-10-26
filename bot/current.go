@@ -26,17 +26,16 @@ func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
 			cd.Current.Book.Name, cd.Current.Deadline.Format(DATE_LAYOUT))
 	}
 
-	vb.sendMessage(chatId, msg, nil)
+	vb.sendPlainMessage(chatId, msg)
 }
 
 func (vb *LitNightBot) handleCurrentDeadlineNoBook(chatId int64) {
-	vb.sendMessage(
+	vb.sendPlainMessage(
 		chatId,
 		"Хей-хей! 🚀\n"+
 			"Похоже, мы находимся в параллельной вселенной!\n"+
 			"Устанавливать дедлайн без выбранной книги — это как пытаться запустить ракету без топлива. 🚀💨\n"+
 			"Давайте сначала выберем книгу, а потом уже обсудим, когда будем её читать! Так мы точно не улетим в никуда! 📖✨",
-		nil,
 	)
 }
 
@@ -49,7 +48,7 @@ func (vb *LitNightBot) handleCurrentDeadlineRequest(message *tgbotapi.Message) {
 		return
 	}
 
-	vb.sendMessage(chatId, setDeadlineRequestMessage, nil)
+	vb.sendPlainMessage(chatId, setDeadlineRequestMessage)
 }
 
 func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
@@ -64,30 +63,28 @@ func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
 	date, err := time.Parse(DATE_LAYOUT, message.Text)
 
 	if err != nil {
-		vb.sendMessage(
+		vb.sendPlainMessage(
 			chatId,
 			"Ой-ой, кажется, где-то закралась ошибка! 📅\n"+
 				"Я не смог разобрать дату. Попробуй формат: дд.мм.гггг (например, 11.02.2024).\n"+
 				"Давай ещё раз, я верю в тебя! 💪",
-			nil,
 		)
 		return
 	}
 
 	if date.Before(time.Now()) {
-		vb.sendMessage(
+		vb.sendPlainMessage(
 			chatId,
 			"Ой, похоже вы указали дату из прошлого! 😅\n"+
 				"Мы, конечно, не Док и Марти, чтобы отправляться в прошлое на DeLorean.\n"+
 				"Попробуйте выбрать что-то из будущего — ведь только вперёд, к новым приключениям! 🚀⏳",
-			nil,
 		)
 	}
 
 	cd.SetDeadline(date)
 	vb.setChatData(chatId, cd)
 
-	vb.sendMessage(
+	vb.sendPlainMessage(
 		chatId,
 		fmt.Sprintf(
 			"🌟 Ура! Дедлайн установлен! 🌟\n\n"+
@@ -96,7 +93,6 @@ func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
 				"Давайте сделаем это чтение увлекательным приключением, а не гонкой! 📚💨",
 			date.Format(DATE_LAYOUT),
 		),
-		nil,
 	)
 }
 
@@ -106,11 +102,10 @@ func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
 
 	currentBook := cd.Current.Book.Name
 	if currentBook == "" {
-		vb.sendMessage(
+		vb.sendPlainMessage(
 			chatId,
 			"Хмм... Похоже, у вас ещё нет книги в процессе чтения.\n"+
 				"Давайте выберем что-нибудь интересное и погрузимся в новые страницы! 📚✨",
-			nil,
 		)
 		return
 	}
@@ -120,7 +115,7 @@ func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
 
 	vb.setChatData(chatId, cd)
 
-	vb.sendMessage(
+	vb.sendPlainMessage(
 		chatId,
 		fmt.Sprintf(
 			"Ура! Книга \"%s\" прочитана! 🎉\n"+
@@ -128,7 +123,6 @@ func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
 				"Готовы к следующему литературному приключению?",
 			currentBook,
 		),
-		nil,
 	)
 }
 
@@ -137,19 +131,23 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	cd := vb.getChatData(chatId)
 
 	if cd.Current.Book.Name != "" {
-		vb.sendMessage(chatId,
+		vb.sendPlainMessage(
+			chatId,
 			fmt.Sprintf("Вы уже читаете \"%s\"\n"+
 				"Эта книга не заслуживает такого обращения!\n"+
 				"Но если вы хотите новую, давайте найдем ее вместе!\n"+
 				"Но сначала скажите ей об отмене",
-				cd.Current.Book.Name),
-			nil,
+				cd.Current.Book.Name,
+			),
 		)
 		return
 	}
 
 	if len(cd.Wishlist) == 0 {
-		vb.sendMessage(chatId, "Ваш вишлист пуст! Добавьте книги, чтобы я мог выбрать одну для вас.", nil)
+		vb.sendPlainMessage(
+			chatId,
+			"Ваш вишлист пуст! Добавьте книги, чтобы я мог выбрать одну для вас.",
+		)
 		return
 	}
 
@@ -163,7 +161,7 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 
 		vb.setChatData(chatId, cd)
 
-		vb.sendMessage(
+		vb.sendPlainMessage(
 			chatId,
 			fmt.Sprintf(
 				"Тадааам! Вот ваша книга: \"%s\". Приятного чтения! 📚\n\n"+
@@ -172,7 +170,6 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 					"Давайте сделаем так, чтобы время не ускользнуло, как в \"Докторе Кто\" — не забывайте о своих путешествиях во времени! 🕰️",
 				randomBook.Name, cd.Current.Deadline.Format(DATE_LAYOUT),
 			),
-			nil,
 		)
 	}()
 }
@@ -184,10 +181,9 @@ func (vb *LitNightBot) handleCurrentAbort(message *tgbotapi.Message) {
 	currentBook := cd.Current.Book
 
 	if currentBook.Name == "" {
-		vb.sendMessage(
+		vb.sendPlainMessage(
 			chatId,
 			"🚫 Ой-ой! Похоже, у вас нет текущей выбранной книги.\nКак насчет того, чтобы выбрать новую историю? 📚✨",
-			nil,
 		)
 		return
 	}

@@ -56,5 +56,5 @@ func (vb *LitNightBot) handleMenu(message *tgbotapi.Message) {
 	buttons = append(buttons, getHistoryMenu()...)
 	buttons = append(buttons, getMenuButton("❎ Закрыть меню", CBMenuClose))
 
-	vb.sendMessage(chatId, menuText, buttons)
+	vb.sendMessage(chatId, SendMessageParams{text: menuText, buttons: buttons})
 }

@@ -14,10 +14,10 @@ func (vb *LitNightBot) handleHistoryAddBook(message *tgbotapi.Message) {
 	booknames := utils.CleanStrSlice(strings.Split(message.Text, "\n"))
 
 	if len(booknames) == 0 {
-		vb.sendMessage(chatId,
+		vb.sendPlainMessage(
+			chatId,
 			"Эй, книжный искатель! 📚✨\n"+
 				"Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде history-add, например:\n/history-add Моя первая книга",
-			nil,
 		)
 		return
 	}
@@ -28,11 +28,13 @@ func (vb *LitNightBot) handleHistoryAddBook(message *tgbotapi.Message) {
 
 	vb.setChatData(chatId, cd)
 
+	var msgText string
 	if len(booknames) == 1 {
-		vb.sendMessage(chatId, fmt.Sprintf("Книга \"%s\" добавлена в историю.", booknames[0]), nil)
+		msgText = fmt.Sprintf("Книга \"%s\" добавлена в историю.", booknames[0])
 	} else {
-		vb.sendMessage(chatId, fmt.Sprintf("Книги \"%s\" добавлены в историю.", strings.Join(booknames, "\", \"")), nil)
+		msgText = fmt.Sprintf("Книги \"%s\" добавлены в историю.", strings.Join(booknames, "\", \""))
 	}
+	vb.sendPlainMessage(chatId, msgText)
 }
 
 func (vb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string) {
@@ -43,7 +45,7 @@ func (vb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId s
 	vb.setChatData(chatId, cd)
 
 	if err != nil {
-		vb.sendMessage(chatId, err.Error(), nil)
+		vb.sendPlainMessage(chatId, err.Error())
 		return
 	}
 
@@ -64,18 +66,17 @@ func (vb *LitNightBot) handleHistoryShow(message *tgbotapi.Message) {
 	names := cd.GetHistoryBooks()
 
 	if len(names) == 0 {
-		vb.sendMessage(chatId,
+		vb.sendPlainMessage(
+			chatId,
 			"Кажется, список прочитанных книг пока пуст... 😕\n"+
 				"Но не переживайте! Начните прямо сейчас, и скоро здесь будут ваши книжные достижения! 📚💪",
-			nil,
 		)
 		return
 	}
 
-	vb.sendMessage(
+	vb.sendPlainMessage(
 		chatId,
 		"Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\nОтличная работа! 👏📖",
-		nil,
 	)
 }
 
@@ -110,7 +111,7 @@ func (vb *LitNightBot) showCleanHistoryPage(chatId int64, messageID int, page in
 	messageText, buttons := vb.GetCleanHistoryMessage(chatId, messageID, page)
 
 	if messageID == -1 {
-		vb.sendMessage(chatId, messageText, buttons)
+		vb.sendMessage(chatId, SendMessageParams{text: messageText, buttons: buttons})
 	} else {
 		vb.editMessage(chatId, messageID, messageText, buttons)
 	}
