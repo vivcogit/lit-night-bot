@@ -41,7 +41,7 @@ func getWishlistMenu() [][]tgbotapi.InlineKeyboardButton {
 func getHistoryMenu() [][]tgbotapi.InlineKeyboardButton {
 	return []([]tgbotapi.InlineKeyboardButton){
 		getMenuButton("🕰️ Показать историю", CBHistoryShow),
-		getMenuButton("🧹 Чистка истории", CBHistoryShow),
+		getMenuButton("🧹 Чистка истории", CBHistoryClean),
 	}
 }
 

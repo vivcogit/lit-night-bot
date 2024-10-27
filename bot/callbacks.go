@@ -96,7 +96,7 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
 		lnb.handleCleanHistory(message)
 	case CBHistoryChangePage:
 		page, _ := strconv.Atoi(cbParams[0])
-		lnb.showCleanWishlistPage(chatId, messageId, page)
+		lnb.showCleanHistoryPage(chatId, messageId, page)
 	case CBHistoryRemoveBook:
 		lnb.handleHistoryRemoveBook(message, update.CallbackQuery.ID, cbParams)
 

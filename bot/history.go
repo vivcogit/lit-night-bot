@@ -41,7 +41,7 @@ func (lnb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId 
 	chatId := message.Chat.ID
 
 	cd := lnb.getChatData(chatId)
-	_, err := cd.RemoveBookFromWishlist(cbParams[0])
+	_, err := cd.RemoveBookFromHistory(cbParams[0])
 	lnb.setChatData(chatId, cd)
 
 	if err != nil {
@@ -76,7 +76,7 @@ func (lnb *LitNightBot) handleHistoryShow(message *tgbotapi.Message) {
 
 	lnb.sendPlainMessage(
 		chatId,
-		"Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\nОтличная работа! 👏📖",
+		"Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\n\nОтличная работа! 👏📖",
 	)
 }
 
@@ -94,7 +94,7 @@ func (lnb *LitNightBot) GetCleanHistoryMessage(chatId int64, messageID int, page
 
 	booksOnPage, page, isLast := GetBooklistPage(&cd.History, page)
 
-	buttons := GetCleanBooklistButtons(&booksOnPage, page, CBWishlistRemoveBook)
+	buttons := GetCleanBooklistButtons(&booksOnPage, page, CBHistoryRemoveBook)
 
 	navButtons := GetPaginationNavButtons(page, isLast, CBHistoryChangePage)
 
