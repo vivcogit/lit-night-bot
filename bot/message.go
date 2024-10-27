@@ -7,7 +7,7 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-func (vb *LitNightBot) sendProgressJokes(chatId int64) {
+func (lnb *LitNightBot) sendProgressJokes(chatId int64) {
 	rand.Seed(uint64((time.Now().UnixNano())))
 
 	numMessages := rand.Intn(3) + 3
@@ -17,14 +17,14 @@ func (vb *LitNightBot) sendProgressJokes(chatId int64) {
 	})
 
 	for i := 0; i < numMessages; i++ {
-		vb.sendPlainMessage(chatId, ProgressJokes[i])
+		lnb.sendPlainMessage(chatId, ProgressJokes[i])
 
 		sleepDuration := time.Duration(rand.Intn(1000)+1000) * time.Millisecond
 		time.Sleep(sleepDuration)
 	}
 }
 
-func (vb *LitNightBot) editMessage(chatId int64, msgID int, text string, buttons [][]tgbotapi.InlineKeyboardButton) (tgbotapi.Message, error) {
+func (lnb *LitNightBot) editMessage(chatId int64, msgID int, text string, buttons [][]tgbotapi.InlineKeyboardButton) (tgbotapi.Message, error) {
 	editMsg := tgbotapi.NewEditMessageText(chatId, msgID, text)
 	var markup tgbotapi.InlineKeyboardMarkup
 	if len(buttons) > 0 {
@@ -34,12 +34,12 @@ func (vb *LitNightBot) editMessage(chatId int64, msgID int, text string, buttons
 		editMsg.ReplyMarkup = nil
 	}
 
-	return vb.bot.Send(editMsg)
+	return lnb.bot.Send(editMsg)
 }
 
-func (vb *LitNightBot) removeMessage(chatId int64, msgId int) (tgbotapi.Message, error) {
+func (lnb *LitNightBot) removeMessage(chatId int64, msgId int) (tgbotapi.Message, error) {
 	msg := tgbotapi.NewDeleteMessage(chatId, msgId)
-	return vb.bot.Send(msg)
+	return lnb.bot.Send(msg)
 }
 
 type SendMessageParams struct {
@@ -48,11 +48,11 @@ type SendMessageParams struct {
 	replyTo int
 }
 
-func (vb *LitNightBot) sendPlainMessage(chatId int64, text string) (tgbotapi.Message, error) {
-	return vb.sendMessage(chatId, SendMessageParams{text: text})
+func (lnb *LitNightBot) sendPlainMessage(chatId int64, text string) (tgbotapi.Message, error) {
+	return lnb.sendMessage(chatId, SendMessageParams{text: text})
 }
 
-func (vb *LitNightBot) sendMessage(chatId int64, params SendMessageParams) (tgbotapi.Message, error) {
+func (lnb *LitNightBot) sendMessage(chatId int64, params SendMessageParams) (tgbotapi.Message, error) {
 	msg := tgbotapi.NewMessage(chatId, params.text)
 
 	if len(params.buttons) > 0 {
@@ -63,5 +63,5 @@ func (vb *LitNightBot) sendMessage(chatId int64, params SendMessageParams) (tgbo
 		msg.ReplyToMessageID = params.replyTo
 	}
 
-	return vb.bot.Send(msg)
+	return lnb.bot.Send(msg)
 }

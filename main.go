@@ -26,8 +26,8 @@ func GetBot() *bot.LitNightBot {
 }
 
 func main() {
-	vb := GetBot()
+	lnb := GetBot()
 
-	vb.InitMenu()
-	vb.Start()
+	lnb.InitMenu()
+	lnb.Start()
 }

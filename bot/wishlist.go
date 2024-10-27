@@ -9,15 +9,15 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func (vb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string) {
+func (lnb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string) {
 	chatId := message.Chat.ID
 
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 	_, err := cd.RemoveBookFromWishlist(cbParams[0])
-	vb.setChatData(chatId, cd)
+	lnb.setChatData(chatId, cd)
 
 	if err != nil {
-		vb.sendPlainMessage(chatId, err.Error())
+		lnb.sendPlainMessage(chatId, err.Error())
 		return
 	}
 
@@ -25,18 +25,18 @@ func (vb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, cbId 
 		cbId,
 		"🎉 Ура! Книга удалена из вашего списка желаемого! Теперь у вас больше времени для выбора новой! 📚",
 	)
-	vb.bot.Send(callbackConfig)
+	lnb.bot.Send(callbackConfig)
 
 	page, _ := strconv.Atoi(cbParams[1])
-	vb.showCleanWishlistPage(chatId, message.MessageID, page)
+	lnb.showCleanWishlistPage(chatId, message.MessageID, page)
 }
 
-func (vb *LitNightBot) handleShowWishlist(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleShowWishlist(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	if len(cd.Wishlist) == 0 {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			"Все книги из очереди уже прочитаны, и сейчас список пуст.\n"+
 				"Самое время добавить новые книги и продолжить наши литературные приключения!",
@@ -44,29 +44,29 @@ func (vb *LitNightBot) handleShowWishlist(message *tgbotapi.Message) {
 		return
 	}
 
-	vb.sendPlainMessage(
+	lnb.sendPlainMessage(
 		chatId,
 		"📚 Ваши книги в вишлисте:\n\n"+GetBooklistString(&cd.Wishlist),
 	)
 }
 
-func (vb *LitNightBot) handleWishlistClean(message *tgbotapi.Message) {
-	vb.showCleanWishlistPage(message.Chat.ID, -1, 0)
+func (lnb *LitNightBot) handleWishlistClean(message *tgbotapi.Message) {
+	lnb.showCleanWishlistPage(message.Chat.ID, -1, 0)
 }
 
-func (vb *LitNightBot) handleWishlistAddRequest(message *tgbotapi.Message) {
-	vb.sendPlainMessage(message.Chat.ID, addBooksToWishlistRequestMessage)
+func (lnb *LitNightBot) handleWishlistAddRequest(message *tgbotapi.Message) {
+	lnb.sendPlainMessage(message.Chat.ID, addBooksToWishlistRequestMessage)
 }
 
-func (vb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	booknames := utils.CleanStrSlice(strings.Split(message.Text, "\n"))
 
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	cd.AddBooksToWishlist(booknames)
 
-	vb.setChatData(chatId, cd)
+	lnb.setChatData(chatId, cd)
 
 	var textMessage string
 	if len(booknames) == 1 {
@@ -75,11 +75,11 @@ func (vb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message) {
 		textMessage = fmt.Sprintf("Книги \"%s\" добавлены.", strings.Join(booknames, "\", \""))
 	}
 
-	vb.sendPlainMessage(chatId, textMessage)
+	lnb.sendPlainMessage(chatId, textMessage)
 }
 
-func (vb *LitNightBot) getCleanWishlistMessage(chatId int64, page int) (string, [][]tgbotapi.InlineKeyboardButton) {
-	cd := vb.getChatData(chatId)
+func (lnb *LitNightBot) getCleanWishlistMessage(chatId int64, page int) (string, [][]tgbotapi.InlineKeyboardButton) {
+	cd := lnb.getChatData(chatId)
 
 	if len(cd.Wishlist) == 0 {
 		return "Ваш вишлист пуст, нечего удалять. Добавьте новые книги для удаления.", nil
@@ -100,12 +100,12 @@ func (vb *LitNightBot) getCleanWishlistMessage(chatId int64, page int) (string, 
 	return messageText, buttons
 }
 
-func (vb *LitNightBot) showCleanWishlistPage(chatId int64, messageID int, page int) {
-	messageText, buttons := vb.getCleanWishlistMessage(chatId, page)
+func (lnb *LitNightBot) showCleanWishlistPage(chatId int64, messageID int, page int) {
+	messageText, buttons := lnb.getCleanWishlistMessage(chatId, page)
 
 	if messageID == -1 {
-		vb.sendMessage(chatId, SendMessageParams{text: messageText, buttons: buttons})
+		lnb.sendMessage(chatId, SendMessageParams{text: messageText, buttons: buttons})
 	} else {
-		vb.editMessage(chatId, messageID, messageText, buttons)
+		lnb.editMessage(chatId, messageID, messageText, buttons)
 	}
 }

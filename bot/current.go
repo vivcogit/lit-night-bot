@@ -9,9 +9,9 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	var msg string
 
@@ -26,11 +26,11 @@ func (vb *LitNightBot) handleCurrent(message *tgbotapi.Message) {
 			cd.Current.Book.Name, cd.Current.Deadline.Format(DATE_LAYOUT))
 	}
 
-	vb.sendPlainMessage(chatId, msg)
+	lnb.sendPlainMessage(chatId, msg)
 }
 
-func (vb *LitNightBot) handleCurrentDeadlineNoBook(chatId int64) {
-	vb.sendPlainMessage(
+func (lnb *LitNightBot) handleCurrentDeadlineNoBook(chatId int64) {
+	lnb.sendPlainMessage(
 		chatId,
 		"Хей-хей! 🚀\n"+
 			"Похоже, мы находимся в параллельной вселенной!\n"+
@@ -39,31 +39,31 @@ func (vb *LitNightBot) handleCurrentDeadlineNoBook(chatId int64) {
 	)
 }
 
-func (vb *LitNightBot) handleCurrentDeadlineRequest(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleCurrentDeadlineRequest(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 	if cd.Current.Book.UUID == "" {
-		vb.handleCurrentDeadlineNoBook(chatId)
+		lnb.handleCurrentDeadlineNoBook(chatId)
 		return
 	}
 
-	vb.sendPlainMessage(chatId, setDeadlineRequestMessage)
+	lnb.sendPlainMessage(chatId, setDeadlineRequestMessage)
 }
 
-func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	if cd.Current.Book.UUID == "" {
-		vb.handleCurrentDeadlineNoBook(chatId)
+		lnb.handleCurrentDeadlineNoBook(chatId)
 		return
 	}
 
 	date, err := time.Parse(DATE_LAYOUT, message.Text)
 
 	if err != nil {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			"Ой-ой, кажется, где-то закралась ошибка! 📅\n"+
 				"Я не смог разобрать дату. Попробуй формат: дд.мм.гггг (например, 11.02.2024).\n"+
@@ -73,7 +73,7 @@ func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
 	}
 
 	if date.Before(time.Now()) {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			"Ой, похоже вы указали дату из прошлого! 😅\n"+
 				"Мы, конечно, не Док и Марти, чтобы отправляться в прошлое на DeLorean.\n"+
@@ -82,9 +82,9 @@ func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
 	}
 
 	cd.SetDeadline(date)
-	vb.setChatData(chatId, cd)
+	lnb.setChatData(chatId, cd)
 
-	vb.sendPlainMessage(
+	lnb.sendPlainMessage(
 		chatId,
 		fmt.Sprintf(
 			"🌟 Ура! Дедлайн установлен! 🌟\n\n"+
@@ -96,13 +96,13 @@ func (vb *LitNightBot) handleCurrentDeadline(message *tgbotapi.Message) {
 	)
 }
 
-func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	currentBook := cd.Current.Book.Name
 	if currentBook == "" {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			"Хмм... Похоже, у вас ещё нет книги в процессе чтения.\n"+
 				"Давайте выберем что-нибудь интересное и погрузимся в новые страницы! 📚✨",
@@ -113,9 +113,9 @@ func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
 	cd.AddBookToHistory(currentBook)
 	cd.Current = chatdata.CurrentBook{}
 
-	vb.setChatData(chatId, cd)
+	lnb.setChatData(chatId, cd)
 
-	vb.sendPlainMessage(
+	lnb.sendPlainMessage(
 		chatId,
 		fmt.Sprintf(
 			"Ура! Книга \"%s\" прочитана! 🎉\n"+
@@ -126,12 +126,12 @@ func (vb *LitNightBot) handleCurrentComplete(message *tgbotapi.Message) {
 	)
 }
 
-func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	if cd.Current.Book.Name != "" {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			fmt.Sprintf("Вы уже читаете \"%s\"\n"+
 				"Эта книга не заслуживает такого обращения!\n"+
@@ -144,7 +144,7 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	}
 
 	if len(cd.Wishlist) == 0 {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			"Ваш вишлист пуст! Добавьте книги, чтобы я мог выбрать одну для вас.",
 		)
@@ -152,16 +152,16 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	}
 
 	go func() {
-		vb.sendProgressJokes(chatId)
+		lnb.sendProgressJokes(chatId)
 
 		randomIndex := rand.Intn(len(cd.Wishlist))
 		randomBook := cd.Wishlist[randomIndex].Book
 		cd.SetCurrentBook(randomBook)
 		cd.RemoveBookFromWishlist(randomBook.UUID)
 
-		vb.setChatData(chatId, cd)
+		lnb.setChatData(chatId, cd)
 
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			fmt.Sprintf(
 				"Тадааам! Вот ваша книга: \"%s\". Приятного чтения! 📚\n\n"+
@@ -174,14 +174,14 @@ func (vb *LitNightBot) handleCurrentRandom(message *tgbotapi.Message) {
 	}()
 }
 
-func (vb *LitNightBot) handleCurrentAbort(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleCurrentAbort(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	currentBook := cd.Current.Book
 
 	if currentBook.Name == "" {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			"🚫 Ой-ой! Похоже, у вас нет текущей выбранной книги.\nКак насчет того, чтобы выбрать новую историю? 📚✨",
 		)
@@ -210,11 +210,11 @@ func (vb *LitNightBot) handleCurrentAbort(message *tgbotapi.Message) {
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(inlineRow)
 	msg.ReplyMarkup = keyboard
 
-	vb.bot.Send(msg)
+	lnb.bot.Send(msg)
 }
 
-func (vb *LitNightBot) moveCurrentBook(chatId int64, messageID int, moveToHistory bool) {
-	cd := vb.getChatData(chatId)
+func (lnb *LitNightBot) moveCurrentBook(chatId int64, messageID int, moveToHistory bool) {
+	cd := lnb.getChatData(chatId)
 	currentBookName := cd.Current.Book.Name
 	if moveToHistory {
 		cd.AddBookToHistory(currentBookName)
@@ -222,10 +222,10 @@ func (vb *LitNightBot) moveCurrentBook(chatId int64, messageID int, moveToHistor
 		cd.AddBookToWishlist(currentBookName)
 	}
 	cd.Current = chatdata.CurrentBook{}
-	vb.setChatData(chatId, cd)
+	lnb.setChatData(chatId, cd)
 
 	if moveToHistory {
-		vb.editMessage(
+		lnb.editMessage(
 			chatId,
 			messageID,
 			fmt.Sprintf(
@@ -235,7 +235,7 @@ func (vb *LitNightBot) moveCurrentBook(chatId int64, messageID int, moveToHistor
 			nil,
 		)
 	} else {
-		vb.editMessage(
+		lnb.editMessage(
 			chatId,
 			messageID,
 			fmt.Sprintf(

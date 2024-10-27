@@ -45,9 +45,9 @@ func getHistoryMenu() [][]tgbotapi.InlineKeyboardButton {
 	}
 }
 
-func (vb *LitNightBot) handleMenu(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleMenu(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	var buttons [][]tgbotapi.InlineKeyboardButton
 
@@ -56,5 +56,5 @@ func (vb *LitNightBot) handleMenu(message *tgbotapi.Message) {
 	buttons = append(buttons, getHistoryMenu()...)
 	buttons = append(buttons, getMenuButton("❎ Закрыть меню", CBMenuClose))
 
-	vb.sendMessage(chatId, SendMessageParams{text: menuText, buttons: buttons})
+	lnb.sendMessage(chatId, SendMessageParams{text: menuText, buttons: buttons})
 }

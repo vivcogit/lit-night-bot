@@ -13,42 +13,42 @@ type LitNightBot struct {
 	dataPath string
 }
 
-func (vb *LitNightBot) Start() {
+func (lnb *LitNightBot) Start() {
 	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 60
 
-	updates := vb.bot.GetUpdatesChan(updateConfig)
+	updates := lnb.bot.GetUpdatesChan(updateConfig)
 
 	for update := range updates {
 		if update.CallbackQuery != nil {
-			vb.handleCallbackQuery(&update)
+			lnb.handleCallbackQuery(&update)
 			continue
 		}
 
 		if update.Message != nil && update.Message.IsCommand() {
-			vb.handleCommand(&update)
+			lnb.handleCommand(&update)
 			continue
 		}
 
 		if update.Message != nil && update.Message.ReplyToMessage != nil {
-			vb.handleReply(&update)
+			lnb.handleReply(&update)
 			continue
 		}
 	}
 }
 
-func (vb *LitNightBot) handleStart(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleStart(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 
-	filePath := vb.getChatDataFilePath(chatId)
+	filePath := lnb.getChatDataFilePath(chatId)
 	exists, _ := utils.CheckFileExists(filePath)
 
 	if !exists {
 		var chatData chatdata.ChatData
-		vb.setChatData(chatId, &chatData)
+		lnb.setChatData(chatId, &chatData)
 	}
 
-	vb.sendPlainMessage(
+	lnb.sendPlainMessage(
 		chatId,
 		"Привет, книжные фанаты! ✨\n"+
 			"Я здесь, чтобы сделать ваш клуб ещё лучше!\n"+
@@ -58,7 +58,7 @@ func (vb *LitNightBot) handleStart(message *tgbotapi.Message) {
 	)
 }
 
-func (vb *LitNightBot) InitMenu() {
+func (lnb *LitNightBot) InitMenu() {
 	commands := []tgbotapi.BotCommand{
 		{
 			Command:     string(CmdMenu),
@@ -66,7 +66,7 @@ func (vb *LitNightBot) InitMenu() {
 		},
 	}
 
-	_, err := vb.bot.Request(tgbotapi.NewSetMyCommands(commands...))
+	_, err := lnb.bot.Request(tgbotapi.NewSetMyCommands(commands...))
 	if err != nil {
 		log.Panic(err)
 	}

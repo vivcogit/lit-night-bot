@@ -46,7 +46,7 @@ func GetCallbackParam(callbackData string) (CallbackAction, []string, error) {
 	return CallbackAction(cb[0]), cb[1:], nil
 }
 
-func (vb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
+func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
 	cbAction, cbParams, err := GetCallbackParam(update.CallbackQuery.Data)
 
 	if err != nil {
@@ -59,49 +59,49 @@ func (vb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
 	messageId := message.MessageID
 
 	if message.Text == menuText {
-		vb.removeMessage(chatId, messageId)
+		lnb.removeMessage(chatId, messageId)
 	}
 
 	switch cbAction {
 	case CBCurrentShow:
-		vb.handleCurrent(message)
+		lnb.handleCurrent(message)
 	case CBCurrentRandom:
-		vb.handleCurrentRandom(message)
+		lnb.handleCurrentRandom(message)
 	case CBCurrentComplete:
-		vb.handleCurrentComplete(message)
+		lnb.handleCurrentComplete(message)
 	case CBCurrentChangeDeadlineRequest:
-		vb.handleCurrentDeadlineRequest(message)
+		lnb.handleCurrentDeadlineRequest(message)
 	case CBCurrentToHistory:
-		vb.moveCurrentBook(chatId, messageId, true)
+		lnb.moveCurrentBook(chatId, messageId, true)
 	case CBCurrentToWishlist:
-		vb.moveCurrentBook(chatId, messageId, false)
+		lnb.moveCurrentBook(chatId, messageId, false)
 	case CBCurrentAbort:
-		vb.handleCurrentAbort(message)
+		lnb.handleCurrentAbort(message)
 
 	case CBWishlistAddBookRequest:
-		vb.handleWishlistAddRequest(message)
+		lnb.handleWishlistAddRequest(message)
 	case CBWishlistShow:
-		vb.handleShowWishlist(message)
+		lnb.handleShowWishlist(message)
 	case CBWishlistClean:
-		vb.handleWishlistClean(message)
+		lnb.handleWishlistClean(message)
 	case CBWishlistChangePage:
 		page, _ := strconv.Atoi(cbParams[0])
-		vb.showCleanWishlistPage(chatId, messageId, page)
+		lnb.showCleanWishlistPage(chatId, messageId, page)
 	case CBWishlistRemoveBook:
-		vb.handleWishlistRemoveBook(message, update.CallbackQuery.ID, cbParams)
+		lnb.handleWishlistRemoveBook(message, update.CallbackQuery.ID, cbParams)
 
 	case CBHistoryShow:
-		vb.handleHistoryShow(message)
+		lnb.handleHistoryShow(message)
 	case CBHistoryClean:
-		vb.handleCleanHistory(message)
+		lnb.handleCleanHistory(message)
 	case CBHistoryChangePage:
 		page, _ := strconv.Atoi(cbParams[0])
-		vb.showCleanWishlistPage(chatId, messageId, page)
+		lnb.showCleanWishlistPage(chatId, messageId, page)
 	case CBHistoryRemoveBook:
-		vb.handleHistoryRemoveBook(message, update.CallbackQuery.ID, cbParams)
+		lnb.handleHistoryRemoveBook(message, update.CallbackQuery.ID, cbParams)
 
 	case CBMenuClose, CBCancel:
-		vb.removeMessage(chatId, messageId)
+		lnb.removeMessage(chatId, messageId)
 
 	default:
 		log.Printf("Неизвестный callback: %s. Пожалуйста, позаботьтесь об этом, чтобы мы могли помочь вам выбрать следующую книгу! 📚😅", string(cbAction))

@@ -7,17 +7,17 @@ import (
 	"strconv"
 )
 
-func (vb *LitNightBot) getChatDataFilePath(chatId int64) string {
-	return filepath.Join(vb.dataPath, strconv.FormatInt(chatId, 10))
+func (lnb *LitNightBot) getChatDataFilePath(chatId int64) string {
+	return filepath.Join(lnb.dataPath, strconv.FormatInt(chatId, 10))
 }
 
-func (vb *LitNightBot) getChatData(chatId int64) *chatdata.ChatData {
+func (lnb *LitNightBot) getChatData(chatId int64) *chatdata.ChatData {
 	var cd chatdata.ChatData
-	utils.ReadJSONFromFile(vb.getChatDataFilePath(chatId), &cd)
+	utils.ReadJSONFromFile(lnb.getChatDataFilePath(chatId), &cd)
 
 	return &cd
 }
 
-func (vb *LitNightBot) setChatData(chatId int64, cd *chatdata.ChatData) {
-	utils.WriteJSONToFile(vb.getChatDataFilePath(chatId), cd)
+func (lnb *LitNightBot) setChatData(chatId int64, cd *chatdata.ChatData) {
+	utils.WriteJSONToFile(lnb.getChatDataFilePath(chatId), cd)
 }

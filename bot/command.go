@@ -10,19 +10,19 @@ const (
 	CmdHistoryAdd Command = "h_add"
 )
 
-func (vb *LitNightBot) handleCommand(update *tgbotapi.Update) {
+func (lnb *LitNightBot) handleCommand(update *tgbotapi.Update) {
 	cmd := Command(update.Message.Command())
 	message := update.Message
 
 	switch cmd {
 	case CmdStart:
-		vb.handleStart(message)
+		lnb.handleStart(message)
 	case CmdMenu:
-		vb.handleMenu(message)
+		lnb.handleMenu(message)
 	case CmdHistoryAdd:
-		vb.handleHistoryAddBook(message)
+		lnb.handleHistoryAddBook(message)
 
 	default:
-		vb.sendPlainMessage(update.Message.Chat.ID, "Упс, неизвестная команда, попробуем ещё раз?")
+		lnb.sendPlainMessage(update.Message.Chat.ID, "Упс, неизвестная команда, попробуем ещё раз?")
 	}
 }

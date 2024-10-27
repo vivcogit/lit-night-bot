@@ -9,12 +9,12 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func (vb *LitNightBot) handleHistoryAddBook(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleHistoryAddBook(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
 	booknames := utils.CleanStrSlice(strings.Split(message.Text, "\n"))
 
 	if len(booknames) == 0 {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			"Эй, книжный искатель! 📚✨\n"+
 				"Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде history-add, например:\n/history-add Моя первая книга",
@@ -22,11 +22,11 @@ func (vb *LitNightBot) handleHistoryAddBook(message *tgbotapi.Message) {
 		return
 	}
 
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	cd.AddBooksToHistory(booknames)
 
-	vb.setChatData(chatId, cd)
+	lnb.setChatData(chatId, cd)
 
 	var msgText string
 	if len(booknames) == 1 {
@@ -34,18 +34,18 @@ func (vb *LitNightBot) handleHistoryAddBook(message *tgbotapi.Message) {
 	} else {
 		msgText = fmt.Sprintf("Книги \"%s\" добавлены в историю.", strings.Join(booknames, "\", \""))
 	}
-	vb.sendPlainMessage(chatId, msgText)
+	lnb.sendPlainMessage(chatId, msgText)
 }
 
-func (vb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string) {
+func (lnb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string) {
 	chatId := message.Chat.ID
 
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 	_, err := cd.RemoveBookFromWishlist(cbParams[0])
-	vb.setChatData(chatId, cd)
+	lnb.setChatData(chatId, cd)
 
 	if err != nil {
-		vb.sendPlainMessage(chatId, err.Error())
+		lnb.sendPlainMessage(chatId, err.Error())
 		return
 	}
 
@@ -53,20 +53,20 @@ func (vb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId s
 		cbId,
 		"🎉 Ура! Книга удалена из вашего списка желаемого! Теперь у вас больше времени для выбора новой! 📚",
 	)
-	vb.bot.Send(callbackConfig)
+	lnb.bot.Send(callbackConfig)
 
 	page, _ := strconv.Atoi(cbParams[1])
-	vb.showCleanHistoryPage(chatId, message.MessageID, page)
+	lnb.showCleanHistoryPage(chatId, message.MessageID, page)
 }
 
-func (vb *LitNightBot) handleHistoryShow(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleHistoryShow(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	cd := vb.getChatData(chatId)
+	cd := lnb.getChatData(chatId)
 
 	names := cd.GetHistoryBooks()
 
 	if len(names) == 0 {
-		vb.sendPlainMessage(
+		lnb.sendPlainMessage(
 			chatId,
 			"Кажется, список прочитанных книг пока пуст... 😕\n"+
 				"Но не переживайте! Начните прямо сейчас, и скоро здесь будут ваши книжные достижения! 📚💪",
@@ -74,19 +74,19 @@ func (vb *LitNightBot) handleHistoryShow(message *tgbotapi.Message) {
 		return
 	}
 
-	vb.sendPlainMessage(
+	lnb.sendPlainMessage(
 		chatId,
 		"Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\nОтличная работа! 👏📖",
 	)
 }
 
-func (vb *LitNightBot) handleCleanHistory(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleCleanHistory(message *tgbotapi.Message) {
 	chatId := message.Chat.ID
-	vb.showCleanHistoryPage(chatId, -1, 0)
+	lnb.showCleanHistoryPage(chatId, -1, 0)
 }
 
-func (vb *LitNightBot) GetCleanHistoryMessage(chatId int64, messageID int, page int) (string, [][]tgbotapi.InlineKeyboardButton) {
-	cd := vb.getChatData(chatId)
+func (lnb *LitNightBot) GetCleanHistoryMessage(chatId int64, messageID int, page int) (string, [][]tgbotapi.InlineKeyboardButton) {
+	cd := lnb.getChatData(chatId)
 
 	if len(cd.History) == 0 {
 		return "Кажется, список прочитанных книг пока пуст... 😕\n", nil
@@ -107,12 +107,12 @@ func (vb *LitNightBot) GetCleanHistoryMessage(chatId int64, messageID int, page 
 	return messageText, buttons
 }
 
-func (vb *LitNightBot) showCleanHistoryPage(chatId int64, messageID int, page int) {
-	messageText, buttons := vb.GetCleanHistoryMessage(chatId, messageID, page)
+func (lnb *LitNightBot) showCleanHistoryPage(chatId int64, messageID int, page int) {
+	messageText, buttons := lnb.GetCleanHistoryMessage(chatId, messageID, page)
 
 	if messageID == -1 {
-		vb.sendMessage(chatId, SendMessageParams{text: messageText, buttons: buttons})
+		lnb.sendMessage(chatId, SendMessageParams{text: messageText, buttons: buttons})
 	} else {
-		vb.editMessage(chatId, messageID, messageText, buttons)
+		lnb.editMessage(chatId, messageID, messageText, buttons)
 	}
 }
