@@ -1,12 +1,11 @@
 package bot
 
 import (
-	"fmt"
-	"log"
 	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sirupsen/logrus"
 )
 
 type CallbackAction string
@@ -46,11 +45,14 @@ func GetCallbackParam(callbackData string) (CallbackAction, []string, error) {
 	return CallbackAction(cb[0]), cb[1:], nil
 }
 
-func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
+func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *logrus.Entry) {
+	logger = logger.WithField("callback_data", update.CallbackQuery.Data)
+	logger.Info("Handling callback query")
+
 	cbAction, cbParams, err := GetCallbackParam(update.CallbackQuery.Data)
 
 	if err != nil {
-		fmt.Println(err.Error())
+		logger.Error("Error parsing callback parameters: ", err)
 		return
 	}
 
@@ -60,50 +62,55 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update) {
 
 	if message.Text == menuText {
 		lnb.removeMessage(chatId, messageId)
+		logger.Infof("Removed menu message with ID %d", messageId)
 	}
 
 	switch cbAction {
 	case CBCurrentShow:
-		lnb.handleCurrent(message)
+		lnb.handleCurrent(update, logger)
 	case CBCurrentRandom:
-		lnb.handleCurrentRandom(message)
+		lnb.handleCurrentRandom(update, logger)
 	case CBCurrentComplete:
-		lnb.handleCurrentComplete(message)
+		lnb.handleCurrentComplete(update, logger)
 	case CBCurrentChangeDeadlineRequest:
-		lnb.handleCurrentDeadlineRequest(message)
+		lnb.handleCurrentDeadlineRequest(update, logger)
 	case CBCurrentToHistory:
-		lnb.moveCurrentBook(chatId, messageId, true)
+		lnb.moveCurrentBook(chatId, messageId, true, logger)
 	case CBCurrentToWishlist:
-		lnb.moveCurrentBook(chatId, messageId, false)
+		lnb.moveCurrentBook(chatId, messageId, false, logger)
 	case CBCurrentAbort:
-		lnb.handleCurrentAbort(message)
+		lnb.handleCurrentAbort(update, logger)
 
 	case CBWishlistAddBookRequest:
-		lnb.handleWishlistAddRequest(message)
+		lnb.handleWishlistAddRequest(message, logger)
 	case CBWishlistShow:
-		lnb.handleShowWishlist(message)
+		lnb.handleShowWishlist(message, logger)
 	case CBWishlistClean:
-		lnb.handleWishlistClean(message)
+		lnb.handleWishlistClean(message, logger)
 	case CBWishlistChangePage:
 		page, _ := strconv.Atoi(cbParams[0])
-		lnb.showCleanWishlistPage(chatId, messageId, page)
+		lnb.showCleanWishlistPage(chatId, messageId, page, logger)
 	case CBWishlistRemoveBook:
-		lnb.handleWishlistRemoveBook(message, update.CallbackQuery.ID, cbParams)
+		lnb.handleWishlistRemoveBook(message, update.CallbackQuery.ID, cbParams, logger)
 
 	case CBHistoryShow:
-		lnb.handleHistoryShow(message)
+		lnb.handleHistoryShow(message, logger)
 	case CBHistoryClean:
-		lnb.handleCleanHistory(message)
+		logger.Info("Cleaning history")
+		lnb.handleCleanHistory(message, logger)
 	case CBHistoryChangePage:
 		page, _ := strconv.Atoi(cbParams[0])
-		lnb.showCleanHistoryPage(chatId, messageId, page)
+		logger.Infof("Changing history page to %d", page)
+		lnb.showCleanHistoryPage(chatId, messageId, page, logger)
 	case CBHistoryRemoveBook:
-		lnb.handleHistoryRemoveBook(message, update.CallbackQuery.ID, cbParams)
+		logger.Info("Removing book from history")
+		lnb.handleHistoryRemoveBook(message, update.CallbackQuery.ID, cbParams, logger)
 
 	case CBMenuClose, CBCancel:
+		logger.Info("Closing menu")
 		lnb.removeMessage(chatId, messageId)
 
 	default:
-		log.Printf("Неизвестный callback: %s. Пожалуйста, позаботьтесь об этом, чтобы мы могли помочь вам выбрать следующую книгу! 📚😅", string(cbAction))
+		logger.Warnf("Unknown callback: %s. Please address this to help the user select the next book!", string(cbAction))
 	}
 }

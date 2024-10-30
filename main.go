@@ -16,7 +16,9 @@ func GetBot() *bot.LitNightBot {
 		panic("failed to retrieve path to storage chats data")
 	}
 
-	bot, err := bot.NewLitNightBot(token, dataPath, true)
+	isDebug := os.Getenv("DEBUG") == "1"
+
+	bot, err := bot.NewLitNightBot(token, dataPath, isDebug)
 
 	if err != nil {
 		panic(err)
@@ -28,6 +30,5 @@ func GetBot() *bot.LitNightBot {
 func main() {
 	lnb := GetBot()
 
-	lnb.InitMenu()
 	lnb.Start()
 }

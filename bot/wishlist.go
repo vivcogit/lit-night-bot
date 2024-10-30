@@ -7,16 +7,21 @@ import (
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sirupsen/logrus"
 )
 
-func (lnb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string) {
+func (lnb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string, logger *logrus.Entry) {
 	chatId := message.Chat.ID
+	logger.Info("Handling wishlist remove book")
 
 	cd := lnb.getChatData(chatId)
-	_, err := cd.RemoveBookFromWishlist(cbParams[0])
+	bookID := cbParams[0]
+
+	_, err := cd.RemoveBookFromWishlist(bookID)
 	lnb.setChatData(chatId, cd)
 
 	if err != nil {
+		logger.WithField("book_id", bookID).WithError(err).Error("Failed to remove book from wishlist")
 		lnb.sendPlainMessage(chatId, err.Error())
 		return
 	}
@@ -27,15 +32,20 @@ func (lnb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, cbId
 	)
 	lnb.bot.Send(callbackConfig)
 
+	logger.WithField("book_id", bookID).Info("Book removed from wishlist")
+
 	page, _ := strconv.Atoi(cbParams[1])
-	lnb.showCleanWishlistPage(chatId, message.MessageID, page)
+	lnb.showCleanWishlistPage(chatId, message.MessageID, page, logger)
 }
 
-func (lnb *LitNightBot) handleShowWishlist(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleShowWishlist(message *tgbotapi.Message, logger *logrus.Entry) {
 	chatId := message.Chat.ID
+	logger.Info("Handling show wishlist")
+
 	cd := lnb.getChatData(chatId)
 
 	if len(cd.Wishlist) == 0 {
+		logger.Info("Wishlist is empty")
 		lnb.sendPlainMessage(
 			chatId,
 			"Все книги из очереди уже прочитаны, и сейчас список пуст.\n"+
@@ -48,22 +58,25 @@ func (lnb *LitNightBot) handleShowWishlist(message *tgbotapi.Message) {
 		chatId,
 		"📚 Ваши книги в вишлисте:\n\n"+GetBooklistString(&cd.Wishlist),
 	)
+	logger.Info("Displayed wishlist books")
 }
 
-func (lnb *LitNightBot) handleWishlistClean(message *tgbotapi.Message) {
-	lnb.showCleanWishlistPage(message.Chat.ID, -1, 0)
+func (lnb *LitNightBot) handleWishlistClean(message *tgbotapi.Message, logger *logrus.Entry) {
+	logger.Info("Handling wishlist clean")
+	lnb.showCleanWishlistPage(message.Chat.ID, -1, 0, logger)
 }
 
-func (lnb *LitNightBot) handleWishlistAddRequest(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleWishlistAddRequest(message *tgbotapi.Message, logger *logrus.Entry) {
+	logger.Info("Handling request to add book to wishlist")
 	lnb.sendPlainMessage(message.Chat.ID, addBooksToWishlistRequestMessage)
 }
 
-func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message) {
+func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message, logger *logrus.Entry) {
 	chatId := message.Chat.ID
 	booknames := utils.CleanStrSlice(strings.Split(message.Text, "\n"))
+	logger.WithField("booknames", booknames).Info("Adding books to wishlist")
 
 	cd := lnb.getChatData(chatId)
-
 	cd.AddBooksToWishlist(booknames)
 
 	lnb.setChatData(chatId, cd)
@@ -76,12 +89,14 @@ func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message) {
 	}
 
 	lnb.sendPlainMessage(chatId, textMessage)
+	logger.Info("Books added to wishlist")
 }
 
-func (lnb *LitNightBot) getCleanWishlistMessage(chatId int64, page int) (string, [][]tgbotapi.InlineKeyboardButton) {
+func (lnb *LitNightBot) getCleanWishlistMessage(chatId int64, page int, logger *logrus.Entry) (string, [][]tgbotapi.InlineKeyboardButton) {
 	cd := lnb.getChatData(chatId)
 
 	if len(cd.Wishlist) == 0 {
+		logger.Info("Wishlist is empty")
 		return "Ваш вишлист пуст, нечего удалять. Добавьте новые книги для удаления.", nil
 	}
 
@@ -100,11 +115,12 @@ func (lnb *LitNightBot) getCleanWishlistMessage(chatId int64, page int) (string,
 	return messageText, buttons
 }
 
-func (lnb *LitNightBot) showCleanWishlistPage(chatId int64, messageID int, page int) {
-	messageText, buttons := lnb.getCleanWishlistMessage(chatId, page)
+func (lnb *LitNightBot) showCleanWishlistPage(chatId int64, messageID int, page int, logger *logrus.Entry) {
+	logger.WithField("messageID", messageID).WithField("page", page).Info("Showing clean wishlist page")
+	messageText, buttons := lnb.getCleanWishlistMessage(chatId, page, logger)
 
 	if messageID == -1 {
-		lnb.sendMessage(chatId, SendMessageParams{text: messageText, buttons: buttons})
+		lnb.sendMessage(chatId, SendMessageParams{Text: messageText, Buttons: buttons})
 	} else {
 		lnb.editMessage(chatId, messageID, messageText, buttons)
 	}

@@ -1,6 +1,9 @@
 package bot
 
-import tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+import (
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sirupsen/logrus"
+)
 
 type Command string
 
@@ -10,19 +13,22 @@ const (
 	CmdHistoryAdd Command = "h_add"
 )
 
-func (lnb *LitNightBot) handleCommand(update *tgbotapi.Update) {
-	cmd := Command(update.Message.Command())
+func (lnb *LitNightBot) handleCommand(update *tgbotapi.Update, logger *logrus.Entry) {
 	message := update.Message
+	command := message.Command()
 
-	switch cmd {
-	case CmdStart:
-		lnb.handleStart(message)
-	case CmdMenu:
-		lnb.handleMenu(message)
-	case CmdHistoryAdd:
-		lnb.handleHistoryAddBook(message)
+	logger = logger.WithField("command", command)
+	logger.Info("Received command")
 
+	switch command {
+	case string(CmdStart):
+		lnb.handleStart(update, logger)
+	case string(CmdMenu):
+		lnb.handleMenu(update, logger)
+	case string(CmdHistoryAdd):
+		lnb.handleHistoryAddBook(update, logger)
 	default:
-		lnb.sendPlainMessage(update.Message.Chat.ID, "Упс, неизвестная команда, попробуем ещё раз?")
+		logger.Warn("Unknown command")
+		lnb.sendPlainMessage(message.Chat.ID, "Команда не распознана.")
 	}
 }
