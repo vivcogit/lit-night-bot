@@ -75,20 +75,22 @@ func (lnb *LitNightBot) Start() {
 	updates := lnb.bot.GetUpdatesChan(updateConfig)
 
 	for update := range updates {
-		logger := lnb.getUserLogger(&update)
+		go func(update tgbotapi.Update) {
+			logger := lnb.getUserLogger(&update)
 
-		if update.CallbackQuery != nil {
-			lnb.handleCallbackQuery(&update, logger)
-			continue
-		}
-		if update.Message != nil && update.Message.IsCommand() {
-			lnb.handleCommand(&update, logger)
-			continue
-		}
-		if update.Message != nil && update.Message.ReplyToMessage != nil {
-			lnb.handleReply(&update, logger)
-			continue
-		}
+			if update.CallbackQuery != nil {
+				lnb.handleCallbackQuery(&update, logger)
+				return
+			}
+			if update.Message != nil && update.Message.IsCommand() {
+				lnb.handleCommand(&update, logger)
+				return
+			}
+			if update.Message != nil && update.Message.ReplyToMessage != nil {
+				lnb.handleReply(&update, logger)
+				return
+			}
+		}(update)
 	}
 }
 
