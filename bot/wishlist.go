@@ -94,34 +94,18 @@ func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message, logger *log
 
 func (lnb *LitNightBot) getCleanWishlistMessage(chatId int64, page int, logger *logrus.Entry) (string, [][]tgbotapi.InlineKeyboardButton) {
 	cd := lnb.getChatData(chatId)
-
-	if len(cd.Wishlist) == 0 {
-		logger.Info("Wishlist is empty")
-		return "Ваш вишлист пуст, нечего удалять. Добавьте новые книги для удаления.", nil
-	}
-
-	booksOnPage, page, isLast := GetBooklistPage(&cd.Wishlist, page)
-
-	buttons := GetCleanBooklistButtons(&booksOnPage, page, CBWishlistRemoveBook)
-
-	navButtons := GetPaginationNavButtons(page, isLast, CBWishlistChangePage)
-
-	if len(*navButtons) > 0 {
-		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(*navButtons...))
-	}
-
-	messageText := fmt.Sprintf("🗑️ Удаление из вишлиста (страница %d):\n\n", page+1)
-
-	return messageText, buttons
+	return GetBooklistPageMessage(
+		chatId, page, logger,
+		&cd.Wishlist,
+		"Ваш вишлист пуст, нечего удалять. Добавьте новые книги для удаления.",
+		removePrefix,
+		CBWishlistRemoveBook,
+		CBWishlistChangePage,
+		"🗑️ Удаление из вишлиста",
+	)
 }
 
 func (lnb *LitNightBot) showCleanWishlistPage(chatId int64, messageID int, page int, logger *logrus.Entry) {
-	logger.WithField("messageID", messageID).WithField("page", page).Info("Showing clean wishlist page")
 	messageText, buttons := lnb.getCleanWishlistMessage(chatId, page, logger)
-
-	if messageID == -1 {
-		lnb.sendMessage(chatId, SendMessageParams{Text: messageText, Buttons: buttons})
-	} else {
-		lnb.editMessage(chatId, messageID, messageText, buttons)
-	}
+	lnb.displayPage(chatId, messageID, messageText, buttons, logger)
 }

@@ -7,12 +7,42 @@ import (
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sirupsen/logrus"
 )
+
+func GetBooklistPageMessage[T chatdata.HasBook](
+	chatId int64,
+	page int,
+	logger *logrus.Entry,
+	booklist *[]T,
+	emptyMessage string,
+	prefix string,
+	callbackItem CallbackAction,
+	callbackChangePage CallbackAction,
+	title string,
+) (string, [][]tgbotapi.InlineKeyboardButton) {
+	if len(*booklist) == 0 {
+		logger.Info("List is empty")
+		return emptyMessage, nil
+	}
+
+	booksOnPage, page, isLast := GetBooklistPage(booklist, page)
+	buttons := GetButtonsForBooklist(&booksOnPage, prefix, callbackItem, page)
+	navButtons := GetPaginationNavButtons(page, isLast, callbackChangePage)
+
+	if len(*navButtons) > 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(*navButtons...))
+	}
+
+	messageText := fmt.Sprintf("%s (страница %d):\n\n", title, page+1)
+	return messageText, buttons
+}
 
 func GetButtonsForBooklist[T chatdata.HasBook](
 	booklist *[]T,
 	prefix string,
-	cbParamsGetter func(uuid string) string,
+	callbackAction CallbackAction,
+	page int,
 ) [][]tgbotapi.InlineKeyboardButton {
 	var buttons [][]tgbotapi.InlineKeyboardButton
 
@@ -23,7 +53,7 @@ func GetButtonsForBooklist[T chatdata.HasBook](
 	for _, item := range *booklist {
 		button := tgbotapi.NewInlineKeyboardButtonData(
 			prefix+" "+item.GetBook().Name,
-			cbParamsGetter(item.GetBook().UUID),
+			GetCallbackParamStr(callbackAction, item.GetBook().UUID, strconv.Itoa(page)),
 		)
 
 		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(button))
@@ -40,20 +70,6 @@ func GetBooklistString[T chatdata.HasBook](booklist *[]T) string {
 	}
 
 	return builder.String()
-}
-
-func GetCleanBooklistButtons[T chatdata.HasBook](
-	booklist *[]T,
-	page int,
-	callbackAction CallbackAction,
-) [][]tgbotapi.InlineKeyboardButton {
-	return GetButtonsForBooklist(
-		booklist,
-		removePrefix,
-		func(uuid string) string {
-			return GetCallbackParamStr(callbackAction, uuid, strconv.Itoa(page))
-		},
-	)
 }
 
 func GetBooklistPage[T chatdata.HasBook](booklist *[]T, page int) ([]T, int, bool) {
@@ -74,4 +90,17 @@ func GetBooklistPage[T chatdata.HasBook](booklist *[]T, page int) ([]T, int, boo
 	isLastPage := end >= totalBooks
 
 	return (*booklist)[start:end], page, isLastPage
+}
+
+func (lnb *LitNightBot) displayPage(
+	chatId int64, messageID int, messageText string,
+	buttons [][]tgbotapi.InlineKeyboardButton, logger *logrus.Entry,
+) {
+	if messageID == -1 {
+		lnb.sendMessage(chatId, SendMessageParams{Text: messageText, Buttons: buttons})
+	} else {
+		lnb.editMessage(chatId, messageID, messageText, buttons)
+	}
+
+	logger.WithFields(logrus.Fields{"message": messageText}).Info("Displayed page")
 }

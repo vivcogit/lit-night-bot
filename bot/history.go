@@ -102,33 +102,20 @@ func (lnb *LitNightBot) sendEmptyHistoryMessage(chatId int64) {
 	)
 }
 
-func (lnb *LitNightBot) GetCleanHistoryMessage(chatId int64, messageID int, page int, logger *logrus.Entry) (string, [][]tgbotapi.InlineKeyboardButton) {
+func (lnb *LitNightBot) getCleanHistoryMessage(chatId int64, page int, logger *logrus.Entry) (string, [][]tgbotapi.InlineKeyboardButton) {
 	cd := lnb.getChatData(chatId)
-
-	if len(cd.History) == 0 {
-		return "Кажется, список прочитанных книг пока пуст... 😕\n", nil
-	}
-
-	booksOnPage, page, isLast := GetBooklistPage(&cd.History, page)
-
-	buttons := GetCleanBooklistButtons(&booksOnPage, page, CBHistoryRemoveBook)
-	navButtons := GetPaginationNavButtons(page, isLast, CBHistoryChangePage)
-	if len(*navButtons) > 0 {
-		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(*navButtons...))
-	}
-
-	messageText := fmt.Sprintf("🗑️ Удаление из истории (страница %d):\n\n", page+1)
-	return messageText, buttons
+	return GetBooklistPageMessage(
+		chatId, page, logger,
+		&cd.History,
+		"Кажется, список прочитанных книг пока пуст... 😕\n",
+		removePrefix,
+		CBHistoryRemoveBook,
+		CBHistoryChangePage,
+		"🗑️ Удаление из истории",
+	)
 }
 
 func (lnb *LitNightBot) showCleanHistoryPage(chatId int64, messageID int, page int, logger *logrus.Entry) {
-	messageText, buttons := lnb.GetCleanHistoryMessage(chatId, messageID, page, logger)
-
-	if messageID == -1 {
-		lnb.sendMessage(chatId, SendMessageParams{Text: messageText, Buttons: buttons})
-	} else {
-		lnb.editMessage(chatId, messageID, messageText, buttons)
-	}
-
-	logger.WithFields(logrus.Fields{"page": page}).Info("Displayed clean history page")
+	messageText, buttons := lnb.getCleanHistoryMessage(chatId, page, logger)
+	lnb.displayPage(chatId, messageID, messageText, buttons, logger)
 }

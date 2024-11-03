@@ -144,51 +144,59 @@ func (lnb *LitNightBot) handleCurrentRandom(update *tgbotapi.Update, logger *log
 	chatID := getUpdateChatID(update)
 	cd := lnb.getChatData(chatID)
 
-	if cd.Current.Book.Name != "" {
-		lnb.sendPlainMessage(
-			chatID,
-			fmt.Sprintf("Вы уже читаете \"%s\"\n"+
-				"Эта книга не заслуживает такого обращения!\n"+
-				"Но если вы хотите новую, давайте найдем ее вместе!\n"+
-				"Но сначала скажите ей об отмене",
-				cd.Current.Book.Name,
-			),
-		)
-		logger.WithField("current_book", cd.Current.Book.Name).Info("Current book already selected")
+	msg := lnb.checkCanChooseBook(cd)
+
+	if msg != "" {
+		lnb.sendPlainMessage(chatID, msg)
 		return
+	}
+
+	lnb.sendProgressJokes(chatID)
+
+	randomIndex := rand.Intn(len(cd.Wishlist))
+	randomBook := cd.Wishlist[randomIndex].Book
+
+	lnb.handleSetCurrentBook(update, randomBook)
+
+	logger.WithField("random_book", randomBook.Name).Info("Random book selected from wishlist")
+}
+
+func (lnb *LitNightBot) checkCanChooseBook(cd *chatdata.ChatData) string {
+	if cd.Current.Book.Name != "" {
+		return fmt.Sprintf("Вы уже читаете \"%s\"\n"+
+			"Эта книга не заслуживает такого обращения!\n"+
+			"Но если вы хотите новую, давайте найдем ее вместе!\n"+
+			"Но сначала скажите ей об отмене",
+			cd.Current.Book.Name,
+		)
 	}
 
 	if len(cd.Wishlist) == 0 {
-		lnb.sendPlainMessage(
-			chatID,
-			"Ваш вишлист пуст! Добавьте книги, чтобы я мог выбрать одну для вас.",
-		)
-		logger.Info("Wishlist is empty")
-		return
+		return "Ваш вишлист пуст! Добавьте книги, чтобы я мог выбрать одну для вас."
 	}
 
-	go func() {
-		lnb.sendProgressJokes(chatID)
+	return ""
+}
 
-		randomIndex := rand.Intn(len(cd.Wishlist))
-		randomBook := cd.Wishlist[randomIndex].Book
-		cd.SetCurrentBook(randomBook)
-		cd.RemoveBookFromWishlist(randomBook.UUID)
+func (lnb *LitNightBot) handleSetCurrentBook(update *tgbotapi.Update, book chatdata.Book) {
+	chatID := getUpdateChatID(update)
+	cd := lnb.getChatData(chatID)
 
-		lnb.setChatData(chatID, cd)
+	cd.SetCurrentBook(book)
+	cd.RemoveBookFromWishlist(book.UUID)
 
-		lnb.sendPlainMessage(
-			chatID,
-			fmt.Sprintf(
-				"Тадааам! Вот ваша книга: \"%s\". Приятного чтения! 📚\n\n"+
-					"И вот вам приятный бонус: я назначил автоматический дедлайн через 2 недели - %s!\n"+
-					"Если хотите изменить его, просто воспользуйтесь кнопкой в меню.\n\n"+
-					"Давайте сделаем так, чтобы время не ускользнуло, как в \"Докторе Кто\" — не забывайте о своих путешествиях во времени! 🕰️",
-				randomBook.Name, cd.Current.Deadline.Format(DATE_LAYOUT),
-			),
-		)
-		logger.WithField("random_book", randomBook.Name).Info("Random book selected from wishlist")
-	}()
+	lnb.setChatData(chatID, cd)
+
+	lnb.sendPlainMessage(
+		chatID,
+		fmt.Sprintf(
+			"Тадааам! Вот ваша книга: \"%s\". Приятного чтения! 📚\n\n"+
+				"И вот вам приятный бонус: я назначил автоматический дедлайн через 2 недели - %s!\n"+
+				"Если хотите изменить его, просто воспользуйтесь кнопкой в меню.\n\n"+
+				"Давайте сделаем так, чтобы время не ускользнуло, как в \"Докторе Кто\" — не забывайте о своих путешествиях во времени! 🕰️",
+			book.Name, cd.Current.Deadline.Format(DATE_LAYOUT),
+		),
+	)
 }
 
 func (lnb *LitNightBot) handleCurrentAbort(update *tgbotapi.Update, logger *logrus.Entry) {
