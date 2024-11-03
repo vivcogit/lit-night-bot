@@ -10,6 +10,15 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+func FindBookByUUID[T chatdata.HasBook](booklist *[]T, uuid string) *T {
+	for _, item := range *booklist {
+		if item.GetBook().UUID == uuid {
+			return &item
+		}
+	}
+	return nil
+}
+
 func GetBooklistPageMessage[T chatdata.HasBook](
 	chatId int64,
 	page int,

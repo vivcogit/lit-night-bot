@@ -5,6 +5,7 @@ const BooksPerPage = 5
 const DATE_LAYOUT = "02.01.2006"
 
 const removePrefix = "❌"
+const choosePrefix = "☑️"
 
 const callbackParamsDelimeter = ":"
 

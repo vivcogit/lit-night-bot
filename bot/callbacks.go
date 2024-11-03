@@ -18,11 +18,14 @@ const (
 	CBCurrentRandom                CallbackAction = "c_random"
 	CBCurrentComplete              CallbackAction = "c_complete"
 	CBCurrentAbort                 CallbackAction = "c_abort"
+	CBCurrentChooseBook            CallbackAction = "c_manual"
 
 	CBWishlistAddBookRequest CallbackAction = "wl_add_req"
 	CBWishlistShow           CallbackAction = "wl_show"
 	CBWishlistClean          CallbackAction = "wl_clean"
 	CBWishlistChangePage     CallbackAction = "wl_clean_page"
+	CBWishlistChoose         CallbackAction = "wl_choose"
+	CBWishlistChoosePage     CallbackAction = "wl_choose_page"
 	CBWishlistRemoveBook     CallbackAction = "wl_rm_book"
 
 	CBHistoryShow       CallbackAction = "h_show"
@@ -80,7 +83,14 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		lnb.moveCurrentBook(chatId, messageId, false, logger)
 	case CBCurrentAbort:
 		lnb.handleCurrentAbort(update, logger)
+	case CBCurrentChooseBook:
+		lnb.handleCurrentChoose(update, cbParams[0], logger)
 
+	case CBWishlistChoose:
+		lnb.handleWishlistChooseFrom(message, logger)
+	case CBWishlistChoosePage:
+		page, _ := strconv.Atoi(cbParams[0])
+		lnb.showChooseFromWishlistPage(chatId, messageId, page, logger)
 	case CBWishlistAddBookRequest:
 		lnb.handleWishlistAddRequest(message, logger)
 	case CBWishlistShow:

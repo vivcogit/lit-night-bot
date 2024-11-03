@@ -16,7 +16,7 @@ func getMenuButton(text string, action CallbackAction) []tgbotapi.InlineKeyboard
 func getCurrentBookMenu(cd *chatdata.ChatData) [][]tgbotapi.InlineKeyboardButton {
 	if cd.Current.Book.UUID != "" {
 		return [][]tgbotapi.InlineKeyboardButton{
-			getMenuButton("📘 Текущая книга", CBCurrentShow),
+			getMenuButton("📖 Текущая книга", CBCurrentShow),
 			getMenuButton("📅 Изменить дедлайн", CBCurrentChangeDeadlineRequest),
 			getMenuButton("✅ Завершить книгу", CBCurrentComplete),
 			getMenuButton("❌ Отменить книгу", CBCurrentAbort),
@@ -25,6 +25,7 @@ func getCurrentBookMenu(cd *chatdata.ChatData) [][]tgbotapi.InlineKeyboardButton
 
 	return [][]tgbotapi.InlineKeyboardButton{
 		getMenuButton("🎲 Случайная книга", CBCurrentRandom),
+		getMenuButton("📘 Выбрать книгу", CBWishlistChoose),
 	}
 }
 

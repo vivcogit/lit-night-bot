@@ -109,3 +109,26 @@ func (lnb *LitNightBot) showCleanWishlistPage(chatId int64, messageID int, page 
 	messageText, buttons := lnb.getCleanWishlistMessage(chatId, page, logger)
 	lnb.displayPage(chatId, messageID, messageText, buttons, logger)
 }
+
+func (lnb *LitNightBot) handleWishlistChooseFrom(message *tgbotapi.Message, logger *logrus.Entry) {
+	logger.Info("Handling wishlist choose from")
+	lnb.showChooseFromWishlistPage(message.Chat.ID, -1, 0, logger)
+}
+
+func (lnb *LitNightBot) getChooseFromWishlistMessage(chatId int64, page int, logger *logrus.Entry) (string, [][]tgbotapi.InlineKeyboardButton) {
+	cd := lnb.getChatData(chatId)
+	return GetBooklistPageMessage(
+		chatId, page, logger,
+		&cd.Wishlist,
+		"Ваш вишлист пуст, нечего выбирать. Добавьте новые книги чтобы было из чего выбрать.",
+		choosePrefix,
+		CBCurrentChooseBook,
+		CBWishlistChoosePage,
+		"📘 Выбор книги из вишлиста",
+	)
+}
+
+func (lnb *LitNightBot) showChooseFromWishlistPage(chatId int64, messageID int, page int, logger *logrus.Entry) {
+	messageText, buttons := lnb.getChooseFromWishlistMessage(chatId, page, logger)
+	lnb.displayPage(chatId, messageID, messageText, buttons, logger)
+}

@@ -156,9 +156,26 @@ func (lnb *LitNightBot) handleCurrentRandom(update *tgbotapi.Update, logger *log
 	randomIndex := rand.Intn(len(cd.Wishlist))
 	randomBook := cd.Wishlist[randomIndex].Book
 
-	lnb.handleSetCurrentBook(update, randomBook)
+	lnb.handleCurrentSet(update, cd, randomBook)
 
 	logger.WithField("random_book", randomBook.Name).Info("Random book selected from wishlist")
+}
+
+func (lnb *LitNightBot) handleCurrentChoose(update *tgbotapi.Update, uuid string, logger *logrus.Entry) {
+	logger.Info("Handling manual book chosen")
+
+	chatID := getUpdateChatID(update)
+	cd := lnb.getChatData(chatID)
+
+	book := FindBookByUUID(&cd.Wishlist, uuid)
+
+	if book == nil {
+		lnb.sendPlainMessage(chatID, "Что-то пошло не так и я не могу найти книгу")
+		return
+	}
+
+	lnb.handleCurrentSet(update, cd, book.GetBook())
+	lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
 }
 
 func (lnb *LitNightBot) checkCanChooseBook(cd *chatdata.ChatData) string {
@@ -178,9 +195,8 @@ func (lnb *LitNightBot) checkCanChooseBook(cd *chatdata.ChatData) string {
 	return ""
 }
 
-func (lnb *LitNightBot) handleSetCurrentBook(update *tgbotapi.Update, book chatdata.Book) {
+func (lnb *LitNightBot) handleCurrentSet(update *tgbotapi.Update, cd *chatdata.ChatData, book chatdata.Book) {
 	chatID := getUpdateChatID(update)
-	cd := lnb.getChatData(chatID)
 
 	cd.SetCurrentBook(book)
 	cd.RemoveBookFromWishlist(book.UUID)
