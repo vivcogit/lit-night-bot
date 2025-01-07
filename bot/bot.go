@@ -2,6 +2,7 @@ package bot
 
 import (
 	chatdata "lit-night-bot/chat-data"
+	io "lit-night-bot/io"
 	"lit-night-bot/utils"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -9,9 +10,9 @@ import (
 )
 
 type LitNightBot struct {
-	bot      *tgbotapi.BotAPI
-	dataPath string
-	logger   *logrus.Logger
+	bot    *tgbotapi.BotAPI
+	iocd   *io.IoChatData
+	logger *logrus.Entry
 }
 
 func getUpdateChatID(update *tgbotapi.Update) int64 {
@@ -43,25 +44,17 @@ func (lnb *LitNightBot) getUserLogger(update *tgbotapi.Update) *logrus.Entry {
 	})
 }
 
-func NewLitNightBot(token, dataPath string, isDebug bool) (*LitNightBot, error) {
+func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isDebug bool) (*LitNightBot, error) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
 	}
 
-	logger := logrus.New()
-	if isDebug {
-		logger.SetLevel(logrus.DebugLevel)
-		logger.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
-	} else {
-		logger.SetLevel(logrus.InfoLevel)
-		logger.SetFormatter(&logrus.JSONFormatter{})
-	}
 	bot.Debug = isDebug
 
 	logger.WithField("username", bot.Self.UserName).Info("Bot authorized")
 
-	return &LitNightBot{bot, dataPath, logger}, nil
+	return &LitNightBot{bot, iocd, logger}, nil
 }
 
 func (lnb *LitNightBot) Start() {
@@ -99,15 +92,15 @@ func (lnb *LitNightBot) handleStart(update *tgbotapi.Update, logger *logrus.Entr
 
 	logger.Info("Handling /start command")
 
-	filePath := lnb.getChatDataFilePath(chatID)
+	filePath := lnb.iocd.GetChatDataFilePath(chatID)
 	exists, _ := utils.CheckFileExists(filePath)
 
 	if !exists {
 		var chatData chatdata.ChatData
-		lnb.setChatData(chatID, &chatData)
+		lnb.iocd.SetChatData(chatID, &chatData)
 	}
 
-	lnb.sendPlainMessage(
+	lnb.SendPlainMessage(
 		chatID,
 		"Привет, книжные фанаты! ✨\n"+
 			"Я здесь, чтобы сделать ваш клуб ещё лучше!\n"+

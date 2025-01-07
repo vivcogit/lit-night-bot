@@ -2,23 +2,15 @@ package main
 
 import (
 	bot "lit-night-bot/bot"
-	"os"
+	"lit-night-bot/cron"
+	io "lit-night-bot/io"
+	"lit-night-bot/tasks"
+
+	"github.com/sirupsen/logrus"
 )
 
-func GetBot() *bot.LitNightBot {
-	token := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if token == "" {
-		panic("failed to retrieve the Telegram token from the environment")
-	}
-
-	dataPath := os.Getenv("DATA_PATH")
-	if dataPath == "" {
-		panic("failed to retrieve path to storage chats data")
-	}
-
-	isDebug := os.Getenv("DEBUG") == "1"
-
-	bot, err := bot.NewLitNightBot(token, dataPath, isDebug)
+func getBot(logger *logrus.Entry, iocd *io.IoChatData, token string, isDebug bool) *bot.LitNightBot {
+	bot, err := bot.NewLitNightBot(logger, token, iocd, isDebug)
 
 	if err != nil {
 		panic(err)
@@ -27,8 +19,31 @@ func GetBot() *bot.LitNightBot {
 	return bot
 }
 
+func getLogger(isDebug bool) *logrus.Entry {
+	logger := logrus.New()
+	if isDebug {
+		logger.SetLevel(logrus.DebugLevel)
+		logger.SetFormatter(&logrus.TextFormatter{FullTimestamp: true})
+	} else {
+		logger.SetLevel(logrus.InfoLevel)
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	}
+
+	return logger.WithField("project", "lit-night-bot")
+}
+
 func main() {
-	lnb := GetBot()
+	config := GetConfig()
+
+	logger := getLogger(config.isDebug)
+	iocd := io.NewIOChatData(logger.WithField("entry", "iocd"), config.dataPath)
+	lnb := getBot(logger.WithField("entry", "bot"), iocd, config.token, config.isDebug)
+
+	cronTasks := []tasks.Task{
+		*tasks.Remind("0 7 * * *", tasks.OneWeekReminderJokes, 7),
+		*tasks.Remind("0 7 * * *", tasks.OneDayReminderJokes, 1),
+	}
 
 	lnb.Start()
+	cron.StartCron(logger.WithField("entry", "cron"), iocd, lnb, &cronTasks)
 }

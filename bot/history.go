@@ -15,7 +15,7 @@ func (lnb *LitNightBot) handleHistoryAddBook(update *tgbotapi.Update, logger *lo
 	booknames := utils.CleanStrSlice(strings.Split(update.Message.Text, "\n"))
 
 	if len(booknames) == 0 {
-		lnb.sendPlainMessage(
+		lnb.SendPlainMessage(
 			chatId,
 			"Эй, книжный искатель! 📚✨\n"+
 				"Чтобы добавить новую книгу в ваш вишлист, просто укажите её название в команде history-add, например:\n/history-add Моя первая книга",
@@ -24,9 +24,9 @@ func (lnb *LitNightBot) handleHistoryAddBook(update *tgbotapi.Update, logger *lo
 		return
 	}
 
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 	cd.AddBooksToHistory(booknames)
-	lnb.setChatData(chatId, cd)
+	lnb.iocd.SetChatData(chatId, cd)
 
 	logger.WithFields(logrus.Fields{
 		"books": booknames,
@@ -38,19 +38,19 @@ func (lnb *LitNightBot) handleHistoryAddBook(update *tgbotapi.Update, logger *lo
 	} else {
 		msgText = fmt.Sprintf("Книги \"%s\" добавлены в историю.", strings.Join(booknames, "\", \""))
 	}
-	lnb.sendPlainMessage(chatId, msgText)
+	lnb.SendPlainMessage(chatId, msgText)
 }
 
 func (lnb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId string, cbParams []string, logger *logrus.Entry) {
 	chatId := message.Chat.ID
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 
 	bookName := cbParams[0]
 	_, err := cd.RemoveBookFromHistory(bookName)
-	lnb.setChatData(chatId, cd)
+	lnb.iocd.SetChatData(chatId, cd)
 
 	if err != nil {
-		lnb.sendPlainMessage(chatId, err.Error())
+		lnb.SendPlainMessage(chatId, err.Error())
 		return
 	}
 
@@ -71,7 +71,7 @@ func (lnb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId 
 
 func (lnb *LitNightBot) handleHistoryShow(message *tgbotapi.Message, logger *logrus.Entry) {
 	chatId := message.Chat.ID
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 	names := cd.GetHistoryBooks()
 
 	if len(names) == 0 {
@@ -79,7 +79,7 @@ func (lnb *LitNightBot) handleHistoryShow(message *tgbotapi.Message, logger *log
 		return
 	}
 
-	lnb.sendPlainMessage(
+	lnb.SendPlainMessage(
 		chatId,
 		"Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\n\nОтличная работа! 👏📖",
 	)
@@ -95,7 +95,7 @@ func (lnb *LitNightBot) handleCleanHistory(message *tgbotapi.Message, logger *lo
 }
 
 func (lnb *LitNightBot) sendEmptyHistoryMessage(chatId int64) {
-	lnb.sendPlainMessage(
+	lnb.SendPlainMessage(
 		chatId,
 		"Кажется, список прочитанных книг пока пуст... 😕\n"+
 			"Но не переживайте! Начните прямо сейчас, и скоро здесь будут ваши книжные достижения! 📚💪",
@@ -103,7 +103,7 @@ func (lnb *LitNightBot) sendEmptyHistoryMessage(chatId int64) {
 }
 
 func (lnb *LitNightBot) getCleanHistoryMessage(chatId int64, page int, logger *logrus.Entry) (string, [][]tgbotapi.InlineKeyboardButton) {
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 	return GetBooklistPageMessage(
 		chatId, page, logger,
 		&cd.History,

@@ -14,15 +14,15 @@ func (lnb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, cbId
 	chatId := message.Chat.ID
 	logger.Info("Handling wishlist remove book")
 
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 	bookID := cbParams[0]
 
 	_, err := cd.RemoveBookFromWishlist(bookID)
-	lnb.setChatData(chatId, cd)
+	lnb.iocd.SetChatData(chatId, cd)
 
 	if err != nil {
 		logger.WithField("book_id", bookID).WithError(err).Error("Failed to remove book from wishlist")
-		lnb.sendPlainMessage(chatId, err.Error())
+		lnb.SendPlainMessage(chatId, err.Error())
 		return
 	}
 
@@ -42,11 +42,11 @@ func (lnb *LitNightBot) handleShowWishlist(message *tgbotapi.Message, logger *lo
 	chatId := message.Chat.ID
 	logger.Info("Handling show wishlist")
 
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 
 	if len(cd.Wishlist) == 0 {
 		logger.Info("Wishlist is empty")
-		lnb.sendPlainMessage(
+		lnb.SendPlainMessage(
 			chatId,
 			"Все книги из очереди уже прочитаны, и сейчас список пуст.\n"+
 				"Самое время добавить новые книги и продолжить наши литературные приключения!",
@@ -54,7 +54,7 @@ func (lnb *LitNightBot) handleShowWishlist(message *tgbotapi.Message, logger *lo
 		return
 	}
 
-	lnb.sendPlainMessage(
+	lnb.SendPlainMessage(
 		chatId,
 		"📚 Ваши книги в вишлисте:\n\n"+GetBooklistString(&cd.Wishlist),
 	)
@@ -68,7 +68,7 @@ func (lnb *LitNightBot) handleWishlistClean(message *tgbotapi.Message, logger *l
 
 func (lnb *LitNightBot) handleWishlistAddRequest(message *tgbotapi.Message, logger *logrus.Entry) {
 	logger.Info("Handling request to add book to wishlist")
-	lnb.sendPlainMessage(message.Chat.ID, addBooksToWishlistRequestMessage)
+	lnb.SendPlainMessage(message.Chat.ID, addBooksToWishlistRequestMessage)
 }
 
 func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message, logger *logrus.Entry) {
@@ -76,10 +76,10 @@ func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message, logger *log
 	booknames := utils.CleanStrSlice(strings.Split(message.Text, "\n"))
 	logger.WithField("booknames", booknames).Info("Adding books to wishlist")
 
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 	cd.AddBooksToWishlist(booknames)
 
-	lnb.setChatData(chatId, cd)
+	lnb.iocd.SetChatData(chatId, cd)
 
 	var textMessage string
 	if len(booknames) == 1 {
@@ -88,12 +88,12 @@ func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message, logger *log
 		textMessage = fmt.Sprintf("Книги \"%s\" добавлены.", strings.Join(booknames, "\", \""))
 	}
 
-	lnb.sendPlainMessage(chatId, textMessage)
+	lnb.SendPlainMessage(chatId, textMessage)
 	logger.Info("Books added to wishlist")
 }
 
 func (lnb *LitNightBot) getCleanWishlistMessage(chatId int64, page int, logger *logrus.Entry) (string, [][]tgbotapi.InlineKeyboardButton) {
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 	return GetBooklistPageMessage(
 		chatId, page, logger,
 		&cd.Wishlist,
@@ -116,7 +116,7 @@ func (lnb *LitNightBot) handleWishlistChooseFrom(message *tgbotapi.Message, logg
 }
 
 func (lnb *LitNightBot) getChooseFromWishlistMessage(chatId int64, page int, logger *logrus.Entry) (string, [][]tgbotapi.InlineKeyboardButton) {
-	cd := lnb.getChatData(chatId)
+	cd := lnb.iocd.GetChatData(chatId)
 	return GetBooklistPageMessage(
 		chatId, page, logger,
 		&cd.Wishlist,

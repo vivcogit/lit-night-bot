@@ -17,7 +17,7 @@ func (lnb *LitNightBot) sendProgressJokes(chatId int64) {
 	})
 
 	for i := 0; i < numMessages; i++ {
-		_, err := lnb.sendPlainMessage(chatId, ProgressJokes[i])
+		_, err := lnb.SendPlainMessage(chatId, ProgressJokes[i])
 		if err != nil {
 			lnb.logger.WithError(err).WithField("chat_id", chatId).Error("Failed to send progress joke")
 		}
@@ -84,6 +84,6 @@ func (lnb *LitNightBot) sendMessage(chatId int64, params SendMessageParams) (tgb
 	return lnb.bot.Send(msg)
 }
 
-func (lnb *LitNightBot) sendPlainMessage(chatId int64, text string) (tgbotapi.Message, error) {
+func (lnb *LitNightBot) SendPlainMessage(chatId int64, text string) (tgbotapi.Message, error) {
 	return lnb.sendMessage(chatId, SendMessageParams{Text: text})
 }

@@ -29,6 +29,6 @@ func (lnb *LitNightBot) handleCommand(update *tgbotapi.Update, logger *logrus.En
 		lnb.handleHistoryAddBook(update, logger)
 	default:
 		logger.Warn("Unknown command")
-		lnb.sendPlainMessage(message.Chat.ID, "Команда не распознана.")
+		lnb.SendPlainMessage(message.Chat.ID, "Команда не распознана.")
 	}
 }
