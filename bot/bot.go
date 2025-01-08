@@ -57,17 +57,8 @@ func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isD
 	return &LitNightBot{bot, iocd, logger}, nil
 }
 
-func (lnb *LitNightBot) Start() {
-	lnb.logger.Info("Starting bot")
-
-	lnb.InitMenu()
-
-	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = 60
-
-	updates := lnb.bot.GetUpdatesChan(updateConfig)
-
-	for update := range updates {
+func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {
+	for update := range *updates {
 		go func(update tgbotapi.Update) {
 			logger := lnb.getUserLogger(&update)
 
@@ -85,6 +76,19 @@ func (lnb *LitNightBot) Start() {
 			}
 		}(update)
 	}
+}
+
+func (lnb *LitNightBot) Start() {
+	lnb.logger.Info("Starting bot")
+
+	lnb.InitMenu()
+
+	updateConfig := tgbotapi.NewUpdate(0)
+	updateConfig.Timeout = 60
+
+	updates := lnb.bot.GetUpdatesChan(updateConfig)
+
+	go lnb.handleUpdatesChan(&updates)
 }
 
 func (lnb *LitNightBot) handleStart(update *tgbotapi.Update, logger *logrus.Entry) {
