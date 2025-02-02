@@ -2,9 +2,12 @@ package bot
 
 import (
 	"fmt"
+	chatdata "lit-night-bot/chat-data"
 	"lit-night-bot/utils"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
@@ -69,6 +72,35 @@ func (lnb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, cbId 
 	}).Info("Book removed from history")
 }
 
+func formatHistoryItems(items *[]chatdata.HistoryItem) string {
+	currentYear := time.Now().Year()
+	grouped := make(map[int][]string)
+
+	for _, item := range *items {
+		year := item.Date.Year()
+		grouped[year] = append(grouped[year], item.Book.Name)
+	}
+
+	var years []int
+	for year := range grouped {
+		years = append(years, year)
+	}
+
+	sort.Sort(sort.Reverse(sort.IntSlice(years)))
+
+	var sb strings.Builder
+	for _, year := range years {
+		if year != currentYear {
+			sb.WriteString(fmt.Sprintf("%d\n", year))
+		}
+		for _, name := range grouped[year] {
+			sb.WriteString(fmt.Sprintf("- %s\n", name))
+		}
+	}
+
+	return sb.String()
+}
+
 func (lnb *LitNightBot) handleHistoryShow(message *tgbotapi.Message, logger *logrus.Entry) {
 	chatId := message.Chat.ID
 	cd := lnb.iocd.GetChatData(chatId)
@@ -81,7 +113,9 @@ func (lnb *LitNightBot) handleHistoryShow(message *tgbotapi.Message, logger *log
 
 	lnb.SendPlainMessage(
 		chatId,
-		"Вот ваши уже прочитанные книги:\n\n✔ "+strings.Join(names, "\n✔ ")+"\n\nОтличная работа! 👏📖",
+		"Вот ваши уже прочитанные книги:\n\n"+
+			formatHistoryItems(&cd.History)+
+			"\nОтличная работа! 👏📖",
 	)
 
 	logger.Info("Displayed book history")
