@@ -16,32 +16,22 @@ type LitNightBot struct {
 }
 
 func getUpdateChatID(update *tgbotapi.Update) int64 {
-	if update.Message != nil {
-		return update.Message.Chat.ID
-	} else if update.CallbackQuery != nil {
-		return update.CallbackQuery.Message.Chat.ID
+	if chat := update.FromChat(); chat != nil {
+		return chat.ID
 	}
 	return 0
 }
 
-func getUpdateUserFrom(update *tgbotapi.Update) *tgbotapi.User {
-	if update.Message != nil {
-		return update.Message.From
-	} else if update.CallbackQuery != nil {
-		return update.CallbackQuery.From
-	}
-	return nil
-}
-
 func (lnb *LitNightBot) getUserLogger(update *tgbotapi.Update) *logrus.Entry {
 	chatID := getUpdateChatID(update)
-	user := getUpdateUserFrom(update)
+	user := update.SentFrom()
 
-	return lnb.logger.WithFields(logrus.Fields{
-		"user_id":   user.ID,
-		"user_name": user.UserName,
-		"chat_id":   chatID,
-	})
+	fields := logrus.Fields{"chat_id": chatID}
+	if user != nil {
+		fields["user_id"] = user.ID
+		fields["user_name"] = user.UserName
+	}
+	return lnb.logger.WithFields(fields)
 }
 
 func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isDebug bool) (*LitNightBot, error) {
