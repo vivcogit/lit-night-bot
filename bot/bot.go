@@ -15,15 +15,16 @@ type LitNightBot struct {
 	logger *logrus.Entry
 }
 
-func getUpdateChatID(update *tgbotapi.Update) int64 {
-	if chat := update.FromChat(); chat != nil {
-		return chat.ID
+func chatIDFromUpdate(update *tgbotapi.Update, log *logrus.Entry) (chatID int64, ok bool) {
+	chat := update.FromChat()
+	if chat == nil {
+		log.WithField("update_id", update.UpdateID).Error("update has no chat context")
+		return 0, false
 	}
-	return 0
+	return chat.ID, true
 }
 
-func (lnb *LitNightBot) getUserLogger(update *tgbotapi.Update) *logrus.Entry {
-	chatID := getUpdateChatID(update)
+func (lnb *LitNightBot) getUserLogger(chatID int64, update *tgbotapi.Update) *logrus.Entry {
 	user := update.SentFrom()
 
 	fields := logrus.Fields{"chat_id": chatID}
@@ -50,7 +51,11 @@ func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isD
 func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {
 	for update := range *updates {
 		go func(update tgbotapi.Update) {
-			logger := lnb.getUserLogger(&update)
+			chatID, ok := chatIDFromUpdate(&update, lnb.logger)
+			if !ok {
+				return
+			}
+			logger := lnb.getUserLogger(chatID, &update)
 
 			if update.CallbackQuery != nil {
 				lnb.handleCallbackQuery(&update, logger)
@@ -82,7 +87,10 @@ func (lnb *LitNightBot) Start() {
 }
 
 func (lnb *LitNightBot) handleStart(update *tgbotapi.Update, logger *logrus.Entry) {
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 
 	logger.Info("Handling /start command")
 

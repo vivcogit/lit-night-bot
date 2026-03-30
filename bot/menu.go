@@ -45,7 +45,10 @@ func getHistoryMenu() [][]tgbotapi.InlineKeyboardButton {
 }
 
 func (lnb *LitNightBot) handleMenu(update *tgbotapi.Update, logger *logrus.Entry) {
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 	cd := lnb.iocd.GetChatData(chatID)
 
 	var buttons [][]tgbotapi.InlineKeyboardButton

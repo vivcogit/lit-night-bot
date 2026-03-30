@@ -14,7 +14,10 @@ import (
 )
 
 func (lnb *LitNightBot) handleHistoryAddBook(update *tgbotapi.Update, logger *logrus.Entry) {
-	chatId := getUpdateChatID(update)
+	chatId, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 	booknames := utils.CleanStrSlice(strings.Split(update.Message.Text, "\n"))
 
 	if len(booknames) == 0 {

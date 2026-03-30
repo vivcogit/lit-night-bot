@@ -12,7 +12,10 @@ import (
 
 func (lnb *LitNightBot) handleCurrent(update *tgbotapi.Update, logger *logrus.Entry) {
 	logger.Info("Handling current book display")
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 	cd := lnb.iocd.GetChatData(chatID)
 
 	var msg string
@@ -45,7 +48,10 @@ func (lnb *LitNightBot) handleCurrentDeadlineNoBook(chatId int64) {
 
 func (lnb *LitNightBot) handleCurrentDeadlineRequest(update *tgbotapi.Update, logger *logrus.Entry) {
 	logger.Info("Requesting deadline change for current book")
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 
 	cd := lnb.iocd.GetChatData(chatID)
 	if cd.Current.Book.UUID == "" {
@@ -58,7 +64,10 @@ func (lnb *LitNightBot) handleCurrentDeadlineRequest(update *tgbotapi.Update, lo
 }
 
 func (lnb *LitNightBot) handleCurrentDeadline(update *tgbotapi.Update, logger *logrus.Entry) {
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 	cd := lnb.iocd.GetChatData(chatID)
 
 	if cd.Current.Book.UUID == "" {
@@ -108,7 +117,10 @@ func (lnb *LitNightBot) handleCurrentDeadline(update *tgbotapi.Update, logger *l
 
 func (lnb *LitNightBot) handleCurrentComplete(update *tgbotapi.Update, logger *logrus.Entry) {
 	logger.Info("Marking current book as complete")
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 	cd := lnb.iocd.GetChatData(chatID)
 
 	currentBook := cd.Current.Book.Name
@@ -141,7 +153,10 @@ func (lnb *LitNightBot) handleCurrentComplete(update *tgbotapi.Update, logger *l
 
 func (lnb *LitNightBot) handleCurrentRandom(update *tgbotapi.Update, logger *logrus.Entry) {
 	logger.Info("Handling random book selection")
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 	cd := lnb.iocd.GetChatData(chatID)
 
 	msg := lnb.checkCanChooseBook(cd)
@@ -156,7 +171,7 @@ func (lnb *LitNightBot) handleCurrentRandom(update *tgbotapi.Update, logger *log
 	randomIndex := rand.Intn(len(cd.Wishlist))
 	randomBook := cd.Wishlist[randomIndex].Book
 
-	lnb.handleCurrentSet(update, cd, randomBook)
+	lnb.handleCurrentSet(update, cd, randomBook, logger)
 
 	logger.WithField("random_book", randomBook.Name).Info("Random book selected from wishlist")
 }
@@ -164,7 +179,10 @@ func (lnb *LitNightBot) handleCurrentRandom(update *tgbotapi.Update, logger *log
 func (lnb *LitNightBot) handleCurrentChoose(update *tgbotapi.Update, uuid string, logger *logrus.Entry) {
 	logger.Info("Handling manual book chosen")
 
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 	cd := lnb.iocd.GetChatData(chatID)
 
 	book := FindBookByUUID(&cd.Wishlist, uuid)
@@ -174,7 +192,7 @@ func (lnb *LitNightBot) handleCurrentChoose(update *tgbotapi.Update, uuid string
 		return
 	}
 
-	lnb.handleCurrentSet(update, cd, book.GetBook())
+	lnb.handleCurrentSet(update, cd, book.GetBook(), logger)
 	lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
 }
 
@@ -195,8 +213,11 @@ func (lnb *LitNightBot) checkCanChooseBook(cd *chatdata.ChatData) string {
 	return ""
 }
 
-func (lnb *LitNightBot) handleCurrentSet(update *tgbotapi.Update, cd *chatdata.ChatData, book chatdata.Book) {
-	chatID := getUpdateChatID(update)
+func (lnb *LitNightBot) handleCurrentSet(update *tgbotapi.Update, cd *chatdata.ChatData, book chatdata.Book, logger *logrus.Entry) {
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 
 	cd.SetCurrentBook(book)
 	cd.RemoveBookFromWishlist(book.UUID)
@@ -217,7 +238,10 @@ func (lnb *LitNightBot) handleCurrentSet(update *tgbotapi.Update, cd *chatdata.C
 
 func (lnb *LitNightBot) handleCurrentAbort(update *tgbotapi.Update, logger *logrus.Entry) {
 	logger.Info("Aborting current book")
-	chatID := getUpdateChatID(update)
+	chatID, ok := chatIDFromUpdate(update, logger)
+	if !ok {
+		return
+	}
 	cd := lnb.iocd.GetChatData(chatID)
 
 	currentBook := cd.Current.Book
