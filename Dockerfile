@@ -7,5 +7,5 @@ COPY . .
 RUN go mod download
 RUN GOOS=linux go build -o ./app
 
-RUN mkdir /app/datas
+RUN mkdir -p /app/datas
 CMD ["/app/app"]

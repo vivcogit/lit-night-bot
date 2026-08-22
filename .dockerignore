@@ -1,0 +1,9 @@
+.git/
+datas/
+local-data/
+.env
+.env.*
+*.prof
+*.test
+.DS_Store
+app
