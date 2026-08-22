@@ -1,8 +1,10 @@
 package bot
 
 import (
+	"fmt"
 	io "lit-night-bot/io"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
@@ -14,6 +16,7 @@ type LitNightBot struct {
 	logger            *logrus.Entry
 	locks             sync.Map
 	historySelections sync.Map
+	location          *time.Location
 }
 
 func chatIDFromUpdate(update *tgbotapi.Update, log *logrus.Entry) (chatID int64, ok bool) {
@@ -36,7 +39,10 @@ func (lnb *LitNightBot) getUserLogger(chatID int64, update *tgbotapi.Update) *lo
 	return lnb.logger.WithFields(fields)
 }
 
-func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isDebug bool) (*LitNightBot, error) {
+func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isDebug bool, location *time.Location) (*LitNightBot, error) {
+	if location == nil {
+		return nil, fmt.Errorf("application location is required")
+	}
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
@@ -46,7 +52,7 @@ func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isD
 
 	logger.WithField("username", bot.Self.UserName).Info("Bot authorized")
 
-	return &LitNightBot{bot: bot, iocd: iocd, logger: logger}, nil
+	return &LitNightBot{bot: bot, iocd: iocd, logger: logger, location: location}, nil
 }
 
 func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {

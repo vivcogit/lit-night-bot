@@ -36,7 +36,7 @@ var OneWeekReminderJokes = []string{
 	"До дедлайна осталось 7 дней. Время достать книгу, пока неделя не пролетела!",
 }
 
-func Remind(spec string, texts []string, days int) *Task {
+func Remind(spec string, texts []string, days int, location *time.Location) *Task {
 	return &Task{
 		CB: func(logger *logrus.Entry, iocd *io.IoChatData, lnb *bot.LitNightBot) {
 			files, err := iocd.GetDatasList()
@@ -61,7 +61,7 @@ func Remind(spec string, texts []string, days int) *Task {
 				}
 
 				current := chatData.CurrentBook()
-				if current != nil && current.Deadline != nil && reminderDue(now, *current.Deadline, days, time.Local) {
+				if current != nil && current.Deadline != nil && reminderDue(now, *current.Deadline, days, location) {
 					randomIndex := rand.Intn(len(texts))
 					randomMessage := texts[randomIndex]
 
@@ -79,7 +79,7 @@ func Remind(spec string, texts []string, days int) *Task {
 
 func reminderDue(now time.Time, deadline time.Time, days int, location *time.Location) bool {
 	if location == nil {
-		location = time.Local
+		return false
 	}
 	target := now.In(location).AddDate(0, 0, days)
 	deadline = deadline.In(location)

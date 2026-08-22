@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"errors"
 	"fmt"
 	chatdata "lit-night-bot/chat-data"
 	"time"
@@ -22,7 +23,7 @@ func (lnb *LitNightBot) handleCurrent(update *tgbotapi.Update, logger *logrus.En
 	}
 	deadline := "не задан"
 	if current.Deadline != nil {
-		deadline = current.Deadline.Format(DATE_LAYOUT)
+		deadline = current.Deadline.In(lnb.location).Format(DATE_LAYOUT)
 	}
 	lnb.SendPlainMessage(chatID, fmt.Sprintf("Сейчас вы читаете «%s» 📖\nДедлайн: %s", current.DisplayName(), deadline))
 }
@@ -54,15 +55,13 @@ func (lnb *LitNightBot) handleCurrentDeadline(update *tgbotapi.Update, logger *l
 		lnb.handleCurrentDeadlineNoBook(chatID)
 		return
 	}
-	date, err := time.ParseInLocation(DATE_LAYOUT, update.Message.Text, time.Local)
+	date, err := parseDeadlineDate(update.Message.Text, time.Now(), lnb.location)
 	if err != nil {
+		if errors.Is(err, errDeadlineInPast) {
+			lnb.SendPlainMessage(chatID, "Дедлайн не может быть в прошлом.")
+			return
+		}
 		lnb.SendPlainMessage(chatID, "Не удалось разобрать дату. Используйте формат дд.мм.гггг, например 11.02.2027.")
-		return
-	}
-	now := time.Now()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	if date.Before(today) {
-		lnb.SendPlainMessage(chatID, "Дедлайн не может быть в прошлом.")
 		return
 	}
 	current.Deadline = &date
@@ -178,8 +177,8 @@ func (lnb *LitNightBot) setCurrentBook(chatID int64, data *chatdata.ChatData, id
 		lnb.SendPlainMessage(chatID, "Книга не найдена в вишлисте.")
 		return false
 	}
-	now := time.Now()
-	deadline := now.Add(14 * 24 * time.Hour)
+	now := time.Now().In(lnb.location)
+	deadline := automaticDeadline(now, lnb.location)
 	book.Status = chatdata.StatusReading
 	book.StartedAt = &now
 	book.Deadline = &deadline
@@ -188,6 +187,28 @@ func (lnb *LitNightBot) setCurrentBook(chatID int64, data *chatdata.ChatData, id
 	}
 	lnb.SendPlainMessage(chatID, fmt.Sprintf("📖 Текущая книга: «%s»\nАвтоматический дедлайн: %s", book.DisplayName(), deadline.Format(DATE_LAYOUT)))
 	return true
+}
+
+var errDeadlineInPast = errors.New("deadline is in the past")
+
+func parseDeadlineDate(input string, now time.Time, location *time.Location) (time.Time, error) {
+	if location == nil {
+		return time.Time{}, errors.New("application location is required")
+	}
+	date, err := time.ParseInLocation(DATE_LAYOUT, input, location)
+	if err != nil {
+		return time.Time{}, err
+	}
+	now = now.In(location)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	if date.Before(today) {
+		return time.Time{}, errDeadlineInPast
+	}
+	return date, nil
+}
+
+func automaticDeadline(now time.Time, location *time.Location) time.Time {
+	return now.In(location).AddDate(0, 0, 14)
 }
 
 func (lnb *LitNightBot) handleCurrentAbort(update *tgbotapi.Update, logger *logrus.Entry) {

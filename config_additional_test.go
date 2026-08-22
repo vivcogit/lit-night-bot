@@ -10,10 +10,33 @@ func TestGetConfig(t *testing.T) {
 	t.Setenv("TELEGRAM_BOT_TOKEN", "test-token")
 	t.Setenv("DATA_PATH", "/tmp/lit-night-test")
 	t.Setenv("DEBUG", "1")
+	t.Setenv("TIMEZONE", "")
 	config := GetConfig()
-	if config.token != "test-token" || config.dataPath != "/tmp/lit-night-test" || !config.isDebug {
+	if config.token != "test-token" || config.dataPath != "/tmp/lit-night-test" || !config.isDebug || config.location.String() != defaultTimezone {
 		t.Fatalf("config = %#v", config)
 	}
+}
+
+func TestGetConfigTimezoneOverride(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_TOKEN", "test-token")
+	t.Setenv("DATA_PATH", "/tmp/lit-night-test")
+	t.Setenv("TIMEZONE", "Asia/Yekaterinburg")
+	config := GetConfig()
+	if config.location.String() != "Asia/Yekaterinburg" {
+		t.Fatalf("location = %s", config.location)
+	}
+}
+
+func TestGetConfigPanicsForInvalidTimezone(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_TOKEN", "test-token")
+	t.Setenv("DATA_PATH", "/tmp/lit-night-test")
+	t.Setenv("TIMEZONE", "Invalid/Timezone")
+	defer func() {
+		if recover() == nil {
+			t.Fatal("GetConfig() must panic for an invalid timezone")
+		}
+	}()
+	GetConfig()
 }
 
 func TestGetConfigPanicsForMissingRequiredValues(t *testing.T) {
