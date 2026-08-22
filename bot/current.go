@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"errors"
 	"fmt"
 	chatdata "lit-night-bot/chat-data"
 	"time"
@@ -11,56 +12,36 @@ import (
 )
 
 func (lnb *LitNightBot) handleCurrent(update *tgbotapi.Update, logger *logrus.Entry) {
-	logger.Info("Handling current book display")
 	chatID, ok := chatIDFromUpdate(update, logger)
 	if !ok {
 		return
 	}
-	cd := lnb.iocd.GetChatData(chatID)
-
-	var msg string
-
-	if cd.Current.Book.Name == "" {
-		msg = "Похоже, у вас пока нет выбранной книги. Как насчёт выбрать что-нибудь интересное для чтения?"
-		logger.Info("No current book selected")
-	} else {
-		msg = fmt.Sprintf(
-			"В данный момент вы читаете книгу \"%s\" 📖\n"+
-				"Как вам она? Делитесь впечатлениями! 😊\n"+
-				"Кстати, у вас назначен дедлайн на %s.\n"+
-				"Надеюсь, до этого времени вы не потеряетесь в мире страниц! 📅😈",
-			cd.Current.Book.Name, cd.Current.Deadline.Format(DATE_LAYOUT))
-		logger.WithField("current_book", cd.Current.Book.Name).Info("Current book displayed")
+	current := lnb.iocd.GetOrCreateChatData(chatID).CurrentBook()
+	if current == nil {
+		lnb.SendPlainMessage(chatID, "Похоже, у вас пока нет выбранной книги.")
+		return
 	}
-
-	lnb.SendPlainMessage(chatID, msg)
+	deadline := "не задан"
+	if current.Deadline != nil {
+		deadline = current.Deadline.In(lnb.location).Format(DATE_LAYOUT)
+	}
+	lnb.SendPlainMessage(chatID, fmt.Sprintf("Сейчас вы читаете «%s» 📖\nДедлайн: %s", current.DisplayName(), deadline))
 }
 
-func (lnb *LitNightBot) handleCurrentDeadlineNoBook(chatId int64) {
-	lnb.SendPlainMessage(
-		chatId,
-		"Хей-хей! 🚀\n"+
-			"Похоже, мы находимся в параллельной вселенной!\n"+
-			"Устанавливать дедлайн без выбранной книги — это как пытаться запустить ракету без топлива. 🚀💨\n"+
-			"Давайте сначала выберем книгу, а потом уже обсудим, когда будем её читать! Так мы точно не улетим в никуда! 📖✨",
-	)
+func (lnb *LitNightBot) handleCurrentDeadlineNoBook(chatID int64) {
+	lnb.SendPlainMessage(chatID, "Сначала выберите текущую книгу, а затем назначьте дедлайн. 📖")
 }
 
 func (lnb *LitNightBot) handleCurrentDeadlineRequest(update *tgbotapi.Update, logger *logrus.Entry) {
-	logger.Info("Requesting deadline change for current book")
 	chatID, ok := chatIDFromUpdate(update, logger)
 	if !ok {
 		return
 	}
-
-	cd := lnb.iocd.GetChatData(chatID)
-	if cd.Current.Book.UUID == "" {
+	if lnb.iocd.GetOrCreateChatData(chatID).CurrentBook() == nil {
 		lnb.handleCurrentDeadlineNoBook(chatID)
 		return
 	}
-
 	lnb.SendPlainMessage(chatID, setDeadlineRequestMessage)
-	logger.WithField("current_book", cd.Current.Book.Name).Info("Deadline request for current book")
 }
 
 func (lnb *LitNightBot) handleCurrentDeadline(update *tgbotapi.Update, logger *logrus.Entry) {
@@ -68,252 +49,204 @@ func (lnb *LitNightBot) handleCurrentDeadline(update *tgbotapi.Update, logger *l
 	if !ok {
 		return
 	}
-	cd := lnb.iocd.GetChatData(chatID)
-
-	if cd.Current.Book.UUID == "" {
+	data := lnb.iocd.GetOrCreateChatData(chatID)
+	current := data.CurrentBook()
+	if current == nil {
 		lnb.handleCurrentDeadlineNoBook(chatID)
 		return
 	}
-
-	date, err := time.Parse(DATE_LAYOUT, update.Message.Text)
-
+	date, err := parseDeadlineDate(update.Message.Text, time.Now(), lnb.location)
 	if err != nil {
-		lnb.SendPlainMessage(
-			chatID,
-			"Ой-ой, кажется, где-то закралась ошибка! 📅\n"+
-				"Я не смог разобрать дату. Попробуй формат: дд.мм.гггг (например, 11.02.2024).\n"+
-				"Давай ещё раз, я верю в тебя! 💪",
-		)
-		logger.WithField("input_date", update.Message.Text).Error("Failed to parse date for deadline")
+		if errors.Is(err, errDeadlineInPast) {
+			lnb.SendPlainMessage(chatID, "Дедлайн не может быть в прошлом.")
+			return
+		}
+		lnb.SendPlainMessage(chatID, "Не удалось разобрать дату. Используйте формат дд.мм.гггг, например 11.02.2027.")
 		return
 	}
-
-	if date.Before(time.Now()) {
-		lnb.SendPlainMessage(
-			chatID,
-			"Ой, похоже вы указали дату из прошлого! 😅\n"+
-				"Мы, конечно, не Док и Марти, чтобы отправляться в прошлое на DeLorean.\n"+
-				"Попробуйте выбрать что-то из будущего — ведь только вперёд, к новым приключениям! 🚀⏳",
-		)
-		logger.WithField("input_date", date).Warn("Date set in the past")
+	current.Deadline = &date
+	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+		logger.WithError(err).Error("Failed to save deadline")
+		lnb.SendPlainMessage(chatID, "Не удалось сохранить дедлайн. Попробуйте ещё раз.")
 		return
 	}
-
-	cd.SetDeadline(date)
-	lnb.iocd.SetChatData(chatID, cd)
-
-	lnb.SendPlainMessage(
-		chatID,
-		fmt.Sprintf(
-			"🌟 Ура! Дедлайн установлен! 🌟\n\n"+
-				"Вы выбрали дату %s для завершения чтения вашей книги. 🕒✨\n"+
-				"Не забывайте, что мы всегда можем изменить его, если ваши планы изменятся!\n\n"+
-				"Давайте сделаем это чтение увлекательным приключением, а не гонкой! 📚💨",
-			date.Format(DATE_LAYOUT),
-		),
-	)
-	logger.WithField("deadline_date", date).Info("Deadline set for current book")
+	lnb.SendPlainMessage(chatID, fmt.Sprintf("✅ Дедлайн установлен на %s.", date.Format(DATE_LAYOUT)))
 }
 
 func (lnb *LitNightBot) handleCurrentComplete(update *tgbotapi.Update, logger *logrus.Entry) {
-	logger.Info("Marking current book as complete")
 	chatID, ok := chatIDFromUpdate(update, logger)
 	if !ok {
 		return
 	}
-	cd := lnb.iocd.GetChatData(chatID)
-
-	currentBook := cd.Current.Book.Name
-	if currentBook == "" {
-		lnb.SendPlainMessage(
-			chatID,
-			"Хмм... Похоже, у вас ещё нет книги в процессе чтения.\n"+
-				"Давайте выберем что-нибудь интересное и погрузимся в новые страницы! 📚✨",
-		)
-		logger.Info("No current book to complete")
+	current := lnb.iocd.GetOrCreateChatData(chatID).CurrentBook()
+	if current == nil {
+		lnb.SendPlainMessage(chatID, "Сейчас нет книги в процессе чтения.")
 		return
 	}
+	lnb.sendMessage(chatID, SendMessageParams{
+		Text:    fmt.Sprintf("Как завершили чтение «%s»?", current.DisplayName()),
+		Buttons: currentCompletionButtons(current.ID),
+	})
+}
 
-	cd.AddBookToHistory(currentBook)
-	cd.Current = chatdata.CurrentBook{}
+func currentCompletionButtons(bookID string) [][]tgbotapi.InlineKeyboardButton {
+	return [][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✅ Прочитали", GetCallbackParamStr(CBCurrentMarkCompleted, bookID))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🚫 Не дочитали / бросили", GetCallbackParamStr(CBCurrentMarkUnfinished, bookID))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBCancel))),
+	}
+}
 
-	lnb.iocd.SetChatData(chatID, cd)
-
-	lnb.SendPlainMessage(
-		chatID,
-		fmt.Sprintf(
-			"Ура! Книга \"%s\" прочитана! 🎉\n"+
-				"Надеюсь, она оставила вам море впечатлений.\n"+
-				"Готовы к следующему литературному приключению?",
-			currentBook,
-		),
-	)
-	logger.WithField("completed_book", currentBook).Info("Current book marked as completed")
+func (lnb *LitNightBot) finishCurrentBook(chatID int64, messageID int, expectedID string, status chatdata.BookStatus, logger *logrus.Entry) {
+	data := lnb.iocd.GetOrCreateChatData(chatID)
+	book, err := data.FinishCurrentBook(expectedID, status, time.Now())
+	if err != nil {
+		logger.WithError(err).Warn("Failed to finish current book")
+		lnb.editMessage(chatID, messageID, "Эта кнопка устарела: текущая книга уже изменилась.", nil)
+		return
+	}
+	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+		logger.WithError(err).Error("Failed to save final book status")
+		lnb.editMessage(chatID, messageID, "Не удалось сохранить новый статус книги. Попробуйте ещё раз.", nil)
+		return
+	}
+	if status == chatdata.StatusCompleted {
+		private, userID := ratingChatContext(data, chatID)
+		lnb.editHTMLMessage(chatID, messageID, renderRatingPanelForChat(book, true, private, userID), ratingPanelButtonsForChat(book, private))
+		return
+	}
+	buttons := [][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("📖 Открыть карточку", GetCallbackParamStr(CBBookShowReplacing, book.ID)),
+		tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
+	)}
+	lnb.editMessage(chatID, messageID, fmt.Sprintf("🚫 Книга «%s» отмечена как недочитанная и добавлена в историю.", book.DisplayName()), buttons)
 }
 
 func (lnb *LitNightBot) handleCurrentRandom(update *tgbotapi.Update, logger *logrus.Entry) {
-	logger.Info("Handling random book selection")
 	chatID, ok := chatIDFromUpdate(update, logger)
 	if !ok {
 		return
 	}
-	cd := lnb.iocd.GetChatData(chatID)
-
-	msg := lnb.checkCanChooseBook(cd)
-
-	if msg != "" {
-		lnb.SendPlainMessage(chatID, msg)
+	data := lnb.iocd.GetOrCreateChatData(chatID)
+	if message := lnb.checkCanChooseBook(data); message != "" {
+		lnb.SendPlainMessage(chatID, message)
 		return
 	}
-
+	wishlist := data.BooksWithStatus(chatdata.StatusWishlist)
 	lnb.sendProgressJokes(chatID)
-
-	randomIndex := rand.Intn(len(cd.Wishlist))
-	randomBook := cd.Wishlist[randomIndex].Book
-
-	lnb.handleCurrentSet(update, cd, randomBook, logger)
-
-	logger.WithField("random_book", randomBook.Name).Info("Random book selected from wishlist")
+	book := wishlist[rand.Intn(len(wishlist))]
+	lnb.setCurrentBook(chatID, data, book.ID, logger)
 }
 
-func (lnb *LitNightBot) handleCurrentChoose(update *tgbotapi.Update, uuid string, logger *logrus.Entry) {
-	logger.Info("Handling manual book chosen")
-
+func (lnb *LitNightBot) handleCurrentChoose(update *tgbotapi.Update, id string, logger *logrus.Entry) {
 	chatID, ok := chatIDFromUpdate(update, logger)
 	if !ok {
 		return
 	}
-	cd := lnb.iocd.GetChatData(chatID)
-
-	book := FindBookByUUID(&cd.Wishlist, uuid)
-
-	if book == nil {
-		lnb.SendPlainMessage(chatID, "Что-то пошло не так и я не могу найти книгу")
+	data := lnb.iocd.GetOrCreateChatData(chatID)
+	if message := lnb.checkCanChooseBook(data); message != "" {
+		lnb.SendPlainMessage(chatID, message)
 		return
 	}
-
-	lnb.handleCurrentSet(update, cd, book.GetBook(), logger)
-	lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
+	book := data.FindBook(id)
+	if book == nil || book.Status != chatdata.StatusWishlist {
+		lnb.SendPlainMessage(chatID, "Книга больше недоступна для выбора.")
+		return
+	}
+	if !lnb.setCurrentBook(chatID, data, id, logger) {
+		return
+	}
+	if update.CallbackQuery != nil && update.CallbackQuery.Message != nil {
+		lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
+	}
 }
 
-func (lnb *LitNightBot) checkCanChooseBook(cd *chatdata.ChatData) string {
-	if cd.Current.Book.Name != "" {
-		return fmt.Sprintf("Вы уже читаете \"%s\"\n"+
-			"Эта книга не заслуживает такого обращения!\n"+
-			"Но если вы хотите новую, давайте найдем ее вместе!\n"+
-			"Но сначала скажите ей об отмене",
-			cd.Current.Book.Name,
-		)
+func (lnb *LitNightBot) checkCanChooseBook(data *chatdata.ChatData) string {
+	if current := data.CurrentBook(); current != nil {
+		return fmt.Sprintf("Вы уже читаете «%s». Сначала завершите или отмените её.", current.DisplayName())
 	}
-
-	if len(cd.Wishlist) == 0 {
-		return "Ваш вишлист пуст! Добавьте книги, чтобы я мог выбрать одну для вас."
+	if len(data.BooksWithStatus(chatdata.StatusWishlist)) == 0 {
+		return "Вишлист пуст. Сначала добавьте книги."
 	}
-
 	return ""
 }
 
-func (lnb *LitNightBot) handleCurrentSet(update *tgbotapi.Update, cd *chatdata.ChatData, book chatdata.Book, logger *logrus.Entry) {
-	chatID, ok := chatIDFromUpdate(update, logger)
-	if !ok {
-		return
+func (lnb *LitNightBot) setCurrentBook(chatID int64, data *chatdata.ChatData, id string, logger *logrus.Entry) bool {
+	book := data.FindBook(id)
+	if book == nil || book.Status != chatdata.StatusWishlist {
+		lnb.SendPlainMessage(chatID, "Книга не найдена в вишлисте.")
+		return false
 	}
+	now := time.Now().In(lnb.location)
+	deadline := automaticDeadline(now, lnb.location)
+	book.Status = chatdata.StatusReading
+	book.StartedAt = &now
+	book.Deadline = &deadline
+	if !lnb.saveChatData(chatID, data, logger) {
+		return false
+	}
+	lnb.SendPlainMessage(chatID, fmt.Sprintf("📖 Текущая книга: «%s»\nАвтоматический дедлайн: %s", book.DisplayName(), deadline.Format(DATE_LAYOUT)))
+	return true
+}
 
-	cd.SetCurrentBook(book)
-	cd.RemoveBookFromWishlist(book.UUID)
+var errDeadlineInPast = errors.New("deadline is in the past")
 
-	lnb.iocd.SetChatData(chatID, cd)
+func parseDeadlineDate(input string, now time.Time, location *time.Location) (time.Time, error) {
+	if location == nil {
+		return time.Time{}, errors.New("application location is required")
+	}
+	date, err := time.ParseInLocation(DATE_LAYOUT, input, location)
+	if err != nil {
+		return time.Time{}, err
+	}
+	now = now.In(location)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	if date.Before(today) {
+		return time.Time{}, errDeadlineInPast
+	}
+	return date, nil
+}
 
-	lnb.SendPlainMessage(
-		chatID,
-		fmt.Sprintf(
-			"Тадааам! Вот ваша книга: \"%s\". Приятного чтения! 📚\n\n"+
-				"И вот вам приятный бонус: я назначил автоматический дедлайн через 2 недели - %s!\n"+
-				"Если хотите изменить его, просто воспользуйтесь кнопкой в меню.\n\n"+
-				"Давайте сделаем так, чтобы время не ускользнуло, как в \"Докторе Кто\" — не забывайте о своих путешествиях во времени! 🕰️",
-			book.Name, cd.Current.Deadline.Format(DATE_LAYOUT),
-		),
-	)
+func automaticDeadline(now time.Time, location *time.Location) time.Time {
+	return now.In(location).AddDate(0, 0, 14)
 }
 
 func (lnb *LitNightBot) handleCurrentAbort(update *tgbotapi.Update, logger *logrus.Entry) {
-	logger.Info("Aborting current book")
 	chatID, ok := chatIDFromUpdate(update, logger)
 	if !ok {
 		return
 	}
-	cd := lnb.iocd.GetChatData(chatID)
-
-	currentBook := cd.Current.Book
-
-	if currentBook.Name == "" {
-		lnb.SendPlainMessage(
-			chatID,
-			"🚫 Ой-ой! Похоже, у вас нет текущей выбранной книги.\nКак насчет того, чтобы выбрать новую историю? 📚✨",
-		)
-		logger.Info("No current book to abort")
+	current := lnb.iocd.GetOrCreateChatData(chatID).CurrentBook()
+	if current == nil {
+		lnb.SendPlainMessage(chatID, "Текущей книги нет.")
 		return
 	}
-
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("🤔 Что делать с отменяемой книгой \"%s\"?\nДавайте решим это вместе! 🎉", currentBook.Name))
-
-	buttons := []tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardButtonData(
-			"❌ Никогда",
-			GetCallbackParamStr(CBCurrentToHistory, currentBook.UUID),
-		),
-		tgbotapi.NewInlineKeyboardButtonData(
-			"🕑 Потом",
-			GetCallbackParamStr(CBCurrentToWishlist, currentBook.UUID),
-		),
-		tgbotapi.NewInlineKeyboardButtonData(
-			"Отмена",
-			GetCallbackParamStr(CBCancel),
-		),
-	}
-
-	inlineRow := tgbotapi.NewInlineKeyboardRow(buttons...)
-
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(inlineRow)
-	msg.ReplyMarkup = keyboard
-
-	lnb.bot.Send(msg)
-	logger.WithField("current_book", currentBook.Name).Info("Abort request for current book")
+	buttons := [][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🚫 Не дочитали", GetCallbackParamStr(CBCurrentToHistory, current.ID)),
+		tgbotapi.NewInlineKeyboardButtonData("🕑 В вишлист", GetCallbackParamStr(CBCurrentToWishlist, current.ID)),
+		tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBCancel)),
+	)}
+	lnb.sendMessage(chatID, SendMessageParams{Text: fmt.Sprintf("Что сделать с «%s»?", current.DisplayName()), Buttons: buttons})
 }
 
-func (lnb *LitNightBot) moveCurrentBook(chatId int64, messageID int, moveToHistory bool, logger *logrus.Entry) {
-	logger.Info("Moving current book to history")
-	cd := lnb.iocd.GetChatData(chatId)
-	currentBookName := cd.Current.Book.Name
+func (lnb *LitNightBot) moveCurrentBook(chatID int64, messageID int, expectedID string, moveToHistory bool, logger *logrus.Entry) {
 	if moveToHistory {
-		cd.AddBookToHistory(currentBookName)
-		logger.WithField("current_book", currentBookName).Info("Book moved to history")
-	} else {
-		cd.AddBookToWishlist(currentBookName)
-		logger.WithField("current_book", currentBookName).Info("Book moved to wishlist")
+		lnb.finishCurrentBook(chatID, messageID, expectedID, chatdata.StatusUnfinished, logger)
+		return
 	}
-	cd.Current = chatdata.CurrentBook{}
-	lnb.iocd.SetChatData(chatId, cd)
-
-	if moveToHistory {
-		lnb.editMessage(
-			chatId,
-			messageID,
-			fmt.Sprintf(
-				"📖 Книга \"%s\" теперь в истории!\nВремя выбрать новую приключенческую историю! 🚀",
-				currentBookName,
-			),
-			nil,
-		)
-	} else {
-		lnb.editMessage(
-			chatId,
-			messageID,
-			fmt.Sprintf(
-				"📝 Книга \"%s\" вернулась в список ожидания!\nДавайте подберем для вас новую интересную историю! 📚✨",
-				currentBookName,
-			),
-			nil,
-		)
+	data := lnb.iocd.GetOrCreateChatData(chatID)
+	current := data.CurrentBook()
+	if current == nil || current.ID != expectedID {
+		lnb.editMessage(chatID, messageID, "Эта кнопка устарела: текущая книга уже изменилась.", nil)
+		return
 	}
+	name := current.DisplayName()
+	current.Deadline = nil
+	current.Status = chatdata.StatusWishlist
+	current.StartedAt = nil
+	if !lnb.saveChatData(chatID, data, logger) {
+		return
+	}
+	destination := "вишлист"
+	lnb.editMessage(chatID, messageID, fmt.Sprintf("Книга «%s» перемещена в %s.", name, destination), nil)
 }

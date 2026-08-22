@@ -1,11 +1,15 @@
 package io
 
 import (
+	"errors"
+	"fmt"
 	chatdata "lit-night-bot/chat-data"
 	"lit-night-bot/utils"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -13,6 +17,7 @@ import (
 type IoChatData struct {
 	dataPath string
 	logger   *logrus.Entry
+	mu       sync.RWMutex
 }
 
 func (iocd *IoChatData) GetChatDataFilePath(chatId int64) string {
@@ -22,27 +27,87 @@ func (iocd *IoChatData) GetChatDataFilePath(chatId int64) string {
 }
 
 func (iocd *IoChatData) GetChatData(chatId int64) *chatdata.ChatData {
+	data, err := iocd.LoadChatData(chatId)
+	if err != nil {
+		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to read chat data from file")
+		return nil
+	}
+	return data
+}
+
+func (iocd *IoChatData) LoadChatData(chatId int64) (*chatdata.ChatData, error) {
+	iocd.mu.RLock()
+	defer iocd.mu.RUnlock()
+
 	var cd chatdata.ChatData
 	filePath := iocd.GetChatDataFilePath(chatId)
 
 	if err := utils.ReadJSONFromFile(filePath, &cd); err != nil {
-		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to read chat data from file")
-		return nil
+		return nil, err
 	}
 
 	iocd.logger.WithField("chat_id", chatId).Info("Successfully read chat data")
-	return &cd
+	return &cd, nil
 }
 
-func (iocd *IoChatData) SetChatData(chatId int64, cd *chatdata.ChatData) {
+func (iocd *IoChatData) SaveChatData(chatId int64, cd *chatdata.ChatData) error {
+	iocd.mu.Lock()
+	defer iocd.mu.Unlock()
+
 	filePath := iocd.GetChatDataFilePath(chatId)
 
 	if err := utils.WriteJSONToFile(filePath, cd); err != nil {
-		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to write chat data to file")
-		return
+		return err
 	}
 
 	iocd.logger.WithField("chat_id", chatId).Info("Successfully wrote chat data to file")
+	return nil
+}
+
+func (iocd *IoChatData) GetOrCreateChatData(chatId int64) *chatdata.ChatData {
+	data, err := iocd.LoadChatData(chatId)
+	if err == nil {
+		return data
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Refusing to replace unreadable chat data")
+		return nil
+	}
+	data = chatdata.NewChatData()
+	if err := iocd.SaveChatData(chatId, data); err != nil {
+		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to create chat data")
+		return nil
+	}
+	return data
+}
+
+func (iocd *IoChatData) BackupChatData(chatId int64) (string, error) {
+	iocd.mu.Lock()
+	defer iocd.mu.Unlock()
+
+	sourcePath := iocd.GetChatDataFilePath(chatId)
+	raw, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("не удалось прочитать исходные данные: %w", err)
+	}
+
+	backupDir := filepath.Join(iocd.dataPath, "_migration", "backups")
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		return "", fmt.Errorf("не удалось создать каталог копий: %w", err)
+	}
+	backupPath := filepath.Join(backupDir, fmt.Sprintf("%d-%s.json", chatId, time.Now().Format("20060102-150405.000000000")))
+	if err := os.WriteFile(backupPath, raw, 0o600); err != nil {
+		return "", fmt.Errorf("не удалось записать копию: %w", err)
+	}
+	return backupPath, nil
+}
+
+func (iocd *IoChatData) RestoreChatData(chatId int64, backupPath string) error {
+	var data chatdata.ChatData
+	if err := utils.ReadJSONFromFile(backupPath, &data); err != nil {
+		return err
+	}
+	return iocd.SaveChatData(chatId, &data)
 }
 
 func (iocd *IoChatData) GetDatasList() ([]string, error) {
@@ -65,6 +130,9 @@ func (iocd *IoChatData) GetDatasList() ([]string, error) {
 }
 
 func NewIOChatData(logger *logrus.Entry, dataPath string) *IoChatData {
+	if err := os.MkdirAll(dataPath, 0o755); err != nil {
+		logger.WithError(err).Fatal("Failed to create data directory")
+	}
 	return &IoChatData{
 		logger:   logger,
 		dataPath: dataPath,

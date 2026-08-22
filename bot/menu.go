@@ -14,7 +14,7 @@ func getMenuButton(text string, action CallbackAction) []tgbotapi.InlineKeyboard
 }
 
 func getCurrentBookMenu(cd *chatdata.ChatData) [][]tgbotapi.InlineKeyboardButton {
-	if cd.Current.Book.UUID != "" {
+	if cd.CurrentBook() != nil {
 		return [][]tgbotapi.InlineKeyboardButton{
 			getMenuButton("📖 Текущая книга", CBCurrentShow),
 			getMenuButton("📅 Изменить дедлайн", CBCurrentChangeDeadlineRequest),
@@ -49,12 +49,24 @@ func (lnb *LitNightBot) handleMenu(update *tgbotapi.Update, logger *logrus.Entry
 	if !ok {
 		return
 	}
-	cd := lnb.iocd.GetChatData(chatID)
+	cd := lnb.iocd.GetOrCreateChatData(chatID)
 
 	var buttons [][]tgbotapi.InlineKeyboardButton
 	buttons = append(buttons, getCurrentBookMenu(cd)...)
 	buttons = append(buttons, getWishlistMenu()...)
 	buttons = append(buttons, getHistoryMenu()...)
+	buttons = append(buttons, getMenuButton("📊 Статистика", CBStatisticsShow))
+	needsReview := 0
+	for _, book := range cd.Books {
+		if book.NeedsReview {
+			needsReview++
+		}
+	}
+	if needsReview > 0 {
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+			tgbotapi.NewInlineKeyboardButtonData("⚠️ Проверить карточки", GetCallbackParamStr(CBBooksReview, "0")),
+		})
+	}
 	buttons = append(buttons, getMenuButton("❎ Закрыть меню", CBMenuClose))
 
 	lnb.sendMessage(chatID, SendMessageParams{

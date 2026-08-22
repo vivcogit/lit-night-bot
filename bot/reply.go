@@ -1,6 +1,8 @@
 package bot
 
 import (
+	"strings"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 )
@@ -18,13 +20,21 @@ func (lnb *LitNightBot) handleReply(update *tgbotapi.Update, logger *logrus.Entr
 
 	logger.Info("Handling reply to message")
 
+	if lnb.handleHistorySelectionReply(update.Message, origMsg, logger) {
+		return
+	}
+
+	if lnb.handleBookFieldReply(update.Message, origMsg.Text, logger) {
+		return
+	}
+
 	if origMsg.Text == setDeadlineRequestMessage {
 		logger.Info("Processing deadline request")
 		lnb.handleCurrentDeadline(update, logger)
 		return
 	}
 
-	if origMsg.Text == addBooksToWishlistRequestMessage {
+	if strings.HasSuffix(origMsg.Text, addBooksToWishlistRequestMessage) {
 		logger.Info("Processing add books to wishlist request")
 		lnb.handleWishlistAdd(update.Message, logger)
 		return
