@@ -45,7 +45,7 @@ func Remind(spec string, texts []string, days int) *Task {
 				return
 			}
 
-			deadlineTarget := time.Now().AddDate(0, 0, days).Truncate(24 * time.Hour)
+			now := time.Now()
 
 			for _, file := range files {
 				chatId, err := strconv.ParseInt(file, 10, 64)
@@ -61,7 +61,7 @@ func Remind(spec string, texts []string, days int) *Task {
 				}
 
 				current := chatData.CurrentBook()
-				if current != nil && current.Deadline != nil && current.Deadline.Truncate(24*time.Hour).Equal(deadlineTarget) {
+				if current != nil && current.Deadline != nil && reminderDue(now, *current.Deadline, days, time.Local) {
 					randomIndex := rand.Intn(len(texts))
 					randomMessage := texts[randomIndex]
 
@@ -75,4 +75,15 @@ func Remind(spec string, texts []string, days int) *Task {
 		},
 		Spec: spec,
 	}
+}
+
+func reminderDue(now time.Time, deadline time.Time, days int, location *time.Location) bool {
+	if location == nil {
+		location = time.Local
+	}
+	target := now.In(location).AddDate(0, 0, days)
+	deadline = deadline.In(location)
+	targetYear, targetMonth, targetDay := target.Date()
+	deadlineYear, deadlineMonth, deadlineDay := deadline.Date()
+	return targetYear == deadlineYear && targetMonth == deadlineMonth && targetDay == deadlineDay
 }

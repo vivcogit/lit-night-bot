@@ -1,6 +1,7 @@
 package io
 
 import (
+	"errors"
 	"fmt"
 	chatdata "lit-night-bot/chat-data"
 	"lit-night-bot/utils"
@@ -26,6 +27,15 @@ func (iocd *IoChatData) GetChatDataFilePath(chatId int64) string {
 }
 
 func (iocd *IoChatData) GetChatData(chatId int64) *chatdata.ChatData {
+	data, err := iocd.LoadChatData(chatId)
+	if err != nil {
+		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to read chat data from file")
+		return nil
+	}
+	return data
+}
+
+func (iocd *IoChatData) LoadChatData(chatId int64) (*chatdata.ChatData, error) {
 	iocd.mu.RLock()
 	defer iocd.mu.RUnlock()
 
@@ -33,18 +43,11 @@ func (iocd *IoChatData) GetChatData(chatId int64) *chatdata.ChatData {
 	filePath := iocd.GetChatDataFilePath(chatId)
 
 	if err := utils.ReadJSONFromFile(filePath, &cd); err != nil {
-		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to read chat data from file")
-		return nil
+		return nil, err
 	}
 
 	iocd.logger.WithField("chat_id", chatId).Info("Successfully read chat data")
-	return &cd
-}
-
-func (iocd *IoChatData) SetChatData(chatId int64, cd *chatdata.ChatData) {
-	if err := iocd.SaveChatData(chatId, cd); err != nil {
-		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to write chat data to file")
-	}
+	return &cd, nil
 }
 
 func (iocd *IoChatData) SaveChatData(chatId int64, cd *chatdata.ChatData) error {
@@ -62,11 +65,19 @@ func (iocd *IoChatData) SaveChatData(chatId int64, cd *chatdata.ChatData) error 
 }
 
 func (iocd *IoChatData) GetOrCreateChatData(chatId int64) *chatdata.ChatData {
-	if data := iocd.GetChatData(chatId); data != nil {
+	data, err := iocd.LoadChatData(chatId)
+	if err == nil {
 		return data
 	}
-	data := chatdata.NewChatData()
-	iocd.SetChatData(chatId, data)
+	if !errors.Is(err, os.ErrNotExist) {
+		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Refusing to replace unreadable chat data")
+		return nil
+	}
+	data = chatdata.NewChatData()
+	if err := iocd.SaveChatData(chatId, data); err != nil {
+		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to create chat data")
+		return nil
+	}
 	return data
 }
 

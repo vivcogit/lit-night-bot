@@ -147,7 +147,9 @@ func (lnb *LitNightBot) swapBookTitleAndAuthor(message *tgbotapi.Message, id str
 		return
 	}
 	book.Title, book.Authors[0] = book.Authors[0], book.Title
-	lnb.iocd.SetChatData(message.Chat.ID, data)
+	if !lnb.saveChatData(message.Chat.ID, data, logger) {
+		return
+	}
 	private, userID := cardChatContext(message.Chat)
 	lnb.editHTMLMessage(message.Chat.ID, message.MessageID, renderBookCardForChat(book, private, userID), bookCardButtonsForChat(book, private, userID))
 }
@@ -247,7 +249,9 @@ func (lnb *LitNightBot) handleBookFieldReply(message *tgbotapi.Message, original
 			}
 		}
 	}
-	lnb.iocd.SetChatData(message.Chat.ID, data)
+	if !lnb.saveChatData(message.Chat.ID, data, logger) {
+		return true
+	}
 	private, userID := cardChatContext(message.Chat)
 	if sourceMessageID > 0 {
 		lnb.editHTMLMessage(message.Chat.ID, sourceMessageID, renderBookCardForChat(book, private, userID), bookCardButtonsForChat(book, private, userID))
@@ -277,7 +281,9 @@ func (lnb *LitNightBot) approveBookCard(message *tgbotapi.Message, id string, lo
 	if remaining == 0 {
 		data.MigrationComplete = true
 	}
-	lnb.iocd.SetChatData(message.Chat.ID, data)
+	if !lnb.saveChatData(message.Chat.ID, data, logger) {
+		return
+	}
 	if remaining == 0 {
 		lnb.editMessage(message.Chat.ID, message.MessageID, migrationCompleteText, nil)
 		return
@@ -295,7 +301,9 @@ func (lnb *LitNightBot) showBooksForReview(chatID int64, messageID int, page int
 	}
 	if len(books) == 0 {
 		data.MigrationComplete = true
-		lnb.iocd.SetChatData(chatID, data)
+		if !lnb.saveChatData(chatID, data, logger) {
+			return
+		}
 		lnb.editMessage(chatID, messageID, migrationCompleteText, nil)
 		return
 	}

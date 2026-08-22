@@ -1,6 +1,7 @@
 package io
 
 import (
+	"errors"
 	chatdata "lit-night-bot/chat-data"
 	"os"
 	"path/filepath"
@@ -36,6 +37,9 @@ func TestGetOrCreateAndListData(t *testing.T) {
 
 func TestStorageErrors(t *testing.T) {
 	storage := newTestStorage(t)
+	if _, err := storage.LoadChatData(404); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing chat error = %v, want os.ErrNotExist", err)
+	}
 	if data := storage.GetChatData(404); data != nil {
 		t.Fatalf("missing data = %#v", data)
 	}
@@ -48,6 +52,23 @@ func TestStorageErrors(t *testing.T) {
 	}
 	if data := storage.GetChatData(500); data != nil {
 		t.Fatalf("broken data = %#v", data)
+	}
+	if _, err := storage.LoadChatData(500); err == nil {
+		t.Fatal("loading malformed JSON must return an error")
+	}
+	before, err := os.ReadFile(broken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data := storage.GetOrCreateChatData(500); data != nil {
+		t.Fatalf("malformed JSON was treated as a missing chat: %#v", data)
+	}
+	after, err := os.ReadFile(broken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("malformed JSON was overwritten: before %q, after %q", before, after)
 	}
 	if err := storage.RestoreChatData(500, broken); err == nil {
 		t.Fatal("restoring broken backup must fail")

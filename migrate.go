@@ -59,7 +59,7 @@ func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64
 			return fmt.Errorf("чат %d: %w", chatID, err)
 		}
 		candidates = append(candidates, migrationCandidate{chatID: chatID, result: result, migrated: migrated})
-		fmt.Printf("🔎 Чат %d: книг %d, история %d, вишлист %d, проверить карточек %d\n", chatID, result.TotalBookCount, result.HistoryCount, result.WishlistCount, result.NeedsReview)
+		fmt.Printf("🔎 Чат %d: книг %d, история %d, вишлист %d, проверить карточек %d, точных дублей пропущено %d, ID заменено %d\n", chatID, result.TotalBookCount, result.HistoryCount, result.WishlistCount, result.NeedsReview, result.DuplicatesSkipped, result.IDsReassigned)
 	}
 	if len(candidates) == 0 {
 		if onlyChatID != 0 {

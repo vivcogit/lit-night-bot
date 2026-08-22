@@ -33,7 +33,9 @@ func (lnb *LitNightBot) handleHistoryAddBook(update *tgbotapi.Update, logger *lo
 		lnb.SendPlainMessage(chatID, "Формат: /h_add Название | Автор")
 		return
 	}
-	lnb.iocd.SetChatData(chatID, data)
+	if !lnb.saveChatData(chatID, data, logger) {
+		return
+	}
 	lnb.SendPlainMessage(chatID, fmt.Sprintf("✅ В историю добавлено книг: %d", count))
 }
 
@@ -81,7 +83,9 @@ func (lnb *LitNightBot) removeHistoryBook(message *tgbotapi.Message, callbackID 
 		lnb.SendPlainMessage(message.Chat.ID, err.Error())
 		return
 	}
-	lnb.iocd.SetChatData(message.Chat.ID, data)
+	if !lnb.saveChatData(message.Chat.ID, data, logger) {
+		return
+	}
 	lnb.bot.Request(tgbotapi.NewCallback(callbackID, "Книга удалена из истории"))
 	lnb.showCleanHistoryPage(message.Chat.ID, message.MessageID, page, logger)
 }

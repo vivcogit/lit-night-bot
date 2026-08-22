@@ -3,6 +3,7 @@ package chatdata
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 	"unicode"
@@ -219,11 +220,13 @@ func (cd *ChatData) IsPrivateChat(chatID int64) bool {
 }
 
 type MigrationResult struct {
-	WishlistCount  int
-	HistoryCount   int
-	CurrentCount   int
-	NeedsReview    int
-	TotalBookCount int
+	WishlistCount     int
+	HistoryCount      int
+	CurrentCount      int
+	NeedsReview       int
+	TotalBookCount    int
+	DuplicatesSkipped int
+	IDsReassigned     int
 }
 
 type HasBook interface {
@@ -349,7 +352,7 @@ func ParseStructuredBook(input string) (string, []string) {
 }
 
 func parseLegacyName(name string) (title string, authors []string, needsReview bool) {
-	name = strings.TrimSpace(name)
+	name = strings.TrimSpace(strings.TrimLeft(name, "✔✅☑•· "))
 	if name == "" {
 		return "Без названия", nil, true
 	}
@@ -370,6 +373,10 @@ func parseLegacyName(name string) (title string, authors []string, needsReview b
 			end := relativeEnd + start + len("«")
 			author := strings.TrimSpace(name[:start])
 			title = strings.TrimSpace(name[start+len("«") : end])
+			suffix := strings.TrimSpace(name[end+len("»"):])
+			if suffix != "" {
+				return name, nil, true
+			}
 			if author != "" && title != "" {
 				return title, []string{author}, false
 			}
@@ -406,6 +413,12 @@ func legacyBook(book Book, status BookStatus, at time.Time) ClubBook {
 	return record
 }
 
+func (book ClubBook) sameMigrationRecord(other ClubBook) bool {
+	book.ID = strings.ToLower(book.ID)
+	other.ID = strings.ToLower(other.ID)
+	return reflect.DeepEqual(book, other)
+}
+
 func MigrateV1(old *ChatData, now time.Time) (*ChatData, MigrationResult, error) {
 	if old == nil {
 		return nil, MigrationResult{}, errors.New("нет данных для миграции")
@@ -415,13 +428,25 @@ func MigrateV1(old *ChatData, now time.Time) (*ChatData, MigrationResult, error)
 	}
 	migrated := NewChatData()
 	result := MigrationResult{}
-	seen := make(map[string]struct{})
+	seen := make(map[string]int)
 	appendBook := func(book ClubBook) error {
 		key := strings.ToLower(book.ID)
-		if _, exists := seen[key]; exists {
-			return fmt.Errorf("дублирующийся UUID %q", book.ID)
+		if index, exists := seen[key]; exists {
+			if migrated.Books[index].sameMigrationRecord(book) {
+				result.DuplicatesSkipped++
+				return nil
+			}
+			for {
+				book.ID = getUUID()
+				key = strings.ToLower(book.ID)
+				if _, collision := seen[key]; !collision {
+					break
+				}
+			}
+			book.NeedsReview = true
+			result.IDsReassigned++
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(migrated.Books)
 		if book.NeedsReview {
 			result.NeedsReview++
 		}

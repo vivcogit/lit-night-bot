@@ -136,7 +136,7 @@ func (lnb *LitNightBot) handleCurrentRandom(update *tgbotapi.Update, logger *log
 	wishlist := data.BooksWithStatus(chatdata.StatusWishlist)
 	lnb.sendProgressJokes(chatID)
 	book := wishlist[rand.Intn(len(wishlist))]
-	lnb.setCurrentBook(chatID, data, book.ID)
+	lnb.setCurrentBook(chatID, data, book.ID, logger)
 }
 
 func (lnb *LitNightBot) handleCurrentChoose(update *tgbotapi.Update, id string, logger *logrus.Entry) {
@@ -154,7 +154,9 @@ func (lnb *LitNightBot) handleCurrentChoose(update *tgbotapi.Update, id string, 
 		lnb.SendPlainMessage(chatID, "Книга больше недоступна для выбора.")
 		return
 	}
-	lnb.setCurrentBook(chatID, data, id)
+	if !lnb.setCurrentBook(chatID, data, id, logger) {
+		return
+	}
 	if update.CallbackQuery != nil && update.CallbackQuery.Message != nil {
 		lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
 	}
@@ -170,19 +172,22 @@ func (lnb *LitNightBot) checkCanChooseBook(data *chatdata.ChatData) string {
 	return ""
 }
 
-func (lnb *LitNightBot) setCurrentBook(chatID int64, data *chatdata.ChatData, id string) {
+func (lnb *LitNightBot) setCurrentBook(chatID int64, data *chatdata.ChatData, id string, logger *logrus.Entry) bool {
 	book := data.FindBook(id)
 	if book == nil || book.Status != chatdata.StatusWishlist {
 		lnb.SendPlainMessage(chatID, "Книга не найдена в вишлисте.")
-		return
+		return false
 	}
 	now := time.Now()
 	deadline := now.Add(14 * 24 * time.Hour)
 	book.Status = chatdata.StatusReading
 	book.StartedAt = &now
 	book.Deadline = &deadline
-	lnb.iocd.SetChatData(chatID, data)
+	if !lnb.saveChatData(chatID, data, logger) {
+		return false
+	}
 	lnb.SendPlainMessage(chatID, fmt.Sprintf("📖 Текущая книга: «%s»\nАвтоматический дедлайн: %s", book.DisplayName(), deadline.Format(DATE_LAYOUT)))
+	return true
 }
 
 func (lnb *LitNightBot) handleCurrentAbort(update *tgbotapi.Update, logger *logrus.Entry) {
@@ -218,7 +223,9 @@ func (lnb *LitNightBot) moveCurrentBook(chatID int64, messageID int, expectedID 
 	current.Deadline = nil
 	current.Status = chatdata.StatusWishlist
 	current.StartedAt = nil
-	lnb.iocd.SetChatData(chatID, data)
+	if !lnb.saveChatData(chatID, data, logger) {
+		return
+	}
 	destination := "вишлист"
 	lnb.editMessage(chatID, messageID, fmt.Sprintf("Книга «%s» перемещена в %s.", name, destination), nil)
 }

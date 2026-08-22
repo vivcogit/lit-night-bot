@@ -28,7 +28,9 @@ func (lnb *LitNightBot) handleWishlistRemoveBook(message *tgbotapi.Message, call
 		lnb.SendPlainMessage(chatID, err.Error())
 		return
 	}
-	lnb.iocd.SetChatData(chatID, data)
+	if !lnb.saveChatData(chatID, data, logger) {
+		return
+	}
 	lnb.bot.Request(tgbotapi.NewCallback(callbackID, "Книга удалена из вишлиста"))
 	page, _ := strconv.Atoi(params[1])
 	lnb.showCleanWishlistPage(chatID, message.MessageID, page, logger)
@@ -91,7 +93,9 @@ func (lnb *LitNightBot) handleWishlistAdd(message *tgbotapi.Message, logger *log
 		lnb.SendPlainMessage(chatID, "Не найдено корректных названий.")
 		return
 	}
-	lnb.iocd.SetChatData(chatID, data)
+	if !lnb.saveChatData(chatID, data, logger) {
+		return
+	}
 	lnb.SendPlainMessage(chatID, fmt.Sprintf("✅ Добавлено книг: %d\n%s", len(added), strings.Join(added, "\n")))
 }
 

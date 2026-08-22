@@ -1,7 +1,9 @@
 package bot
 
 import (
+	"errors"
 	chatdata "lit-night-bot/chat-data"
+	"os"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -9,6 +11,17 @@ import (
 )
 
 const serverMigrationRequiredText = "🔒 Данные бота ещё не обновлены.\n\nАдминистратору сервера нужно выполнить команду migrate. До этого функции бота недоступны."
+const dataStorageErrorText = "⚠️ Не удалось сохранить данные. Изменение не применено; попробуйте ещё раз позже."
+const dataReadErrorText = "⚠️ Данные чата временно недоступны. Файл не был изменён; обратитесь к администратору."
+
+func (lnb *LitNightBot) saveChatData(chatID int64, data *chatdata.ChatData, logger *logrus.Entry) bool {
+	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+		logger.WithError(err).Error("Failed to save chat data")
+		lnb.SendPlainMessage(chatID, dataStorageErrorText)
+		return false
+	}
+	return true
+}
 
 func telegramChatMetadata(chat *tgbotapi.Chat) *chatdata.ChatMetadata {
 	if chat == nil {
@@ -54,16 +67,22 @@ func (lnb *LitNightBot) allowUpdate(update *tgbotapi.Update, logger *logrus.Entr
 	if !ok {
 		return false
 	}
-	data := lnb.iocd.GetChatData(chatID)
-	if data == nil {
+	data, err := lnb.iocd.LoadChatData(chatID)
+	if errors.Is(err, os.ErrNotExist) {
 		data = chatdata.NewChatData()
 		updateChatMetadata(data, update.FromChat())
-		lnb.iocd.SetChatData(chatID, data)
-		return true
+		return lnb.saveChatData(chatID, data, logger)
+	}
+	if err != nil {
+		logger.WithError(err).Error("Failed to load chat data")
+		lnb.SendPlainMessage(chatID, dataReadErrorText)
+		return false
 	}
 	if !data.IsLegacy() && data.MigrationComplete {
 		if updateChatMetadata(data, update.FromChat()) {
-			lnb.iocd.SetChatData(chatID, data)
+			if !lnb.saveChatData(chatID, data, logger) {
+				return false
+			}
 		}
 		return true
 	}

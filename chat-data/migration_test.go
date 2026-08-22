@@ -81,3 +81,44 @@ func TestParseStructuredBook(t *testing.T) {
 		t.Fatalf("unexpected parsed book: %q %#v", title, authors)
 	}
 }
+
+func TestParseLegacyNameTreatsTextAroundQuotesConservatively(t *testing.T) {
+	title, authors, needsReview := parseLegacyName("Карантин в «Гранд-отеле» - Енэ Рейте")
+	if title != "Карантин в «Гранд-отеле» - Енэ Рейте" || len(authors) != 0 || !needsReview {
+		t.Fatalf("ambiguous quoted name parsed as %q %#v review=%v", title, authors, needsReview)
+	}
+
+	title, authors, needsReview = parseLegacyName("✔ «Название» Настоящий автор")
+	if title != "Название" || len(authors) != 1 || authors[0] != "Настоящий автор" || needsReview {
+		t.Fatalf("marked quoted name parsed as %q %#v review=%v", title, authors, needsReview)
+	}
+}
+
+func TestMigrateV1RepairsDuplicateUUIDsWithoutDroppingDistinctBooks(t *testing.T) {
+	now := time.Date(2026, time.August, 23, 12, 0, 0, 0, time.UTC)
+	old := &ChatData{
+		Wishlist: []WishlistItem{
+			{Book: Book{UUID: "duplicate", Name: "«Первая» Автор"}},
+			{Book: Book{UUID: "DUPLICATE", Name: "«Первая» Автор"}},
+		},
+		History: []HistoryItem{{Book: Book{UUID: "duplicate", Name: "«Вторая» Автор"}, Date: now.Add(-24 * time.Hour)}},
+		Current: &CurrentBook{Book: Book{UUID: "duplicate", Name: "«Третья» Автор"}, Deadline: now.Add(14 * 24 * time.Hour)},
+	}
+
+	migrated, result, err := MigrateV1(old, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrated.Books) != 3 || result.TotalBookCount != 3 {
+		t.Fatalf("migrated books = %d, result = %+v", len(migrated.Books), result)
+	}
+	if result.DuplicatesSkipped != 1 || result.IDsReassigned != 2 {
+		t.Fatalf("unexpected duplicate repair report: %+v", result)
+	}
+	if result.NeedsReview != 2 {
+		t.Fatalf("reassigned cards requiring review = %d, want 2", result.NeedsReview)
+	}
+	if err := migrated.ValidateV2(); err != nil {
+		t.Fatal(err)
+	}
+}

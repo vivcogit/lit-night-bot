@@ -308,8 +308,12 @@ func TestMigrateV1ErrorsAndFallbacks(t *testing.T) {
 		Wishlist: []WishlistItem{{Book: Book{Name: "First", UUID: "ABC"}}},
 		History:  []HistoryItem{{Book: Book{Name: "Second", UUID: "abc"}}},
 	}
-	if _, _, err := MigrateV1(legacy, now); err == nil {
-		t.Fatal("case-insensitive duplicate UUID must fail")
+	repaired, result, err := MigrateV1(legacy, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repaired.Books) != 2 || result.IDsReassigned != 1 || !repaired.Books[1].NeedsReview || strings.EqualFold(repaired.Books[0].ID, repaired.Books[1].ID) {
+		t.Fatalf("case-insensitive duplicate UUID was not repaired: books=%#v result=%+v", repaired.Books, result)
 	}
 
 	legacy = &ChatData{History: []HistoryItem{{Book: Book{Name: "Title", UUID: "history1"}}}}
