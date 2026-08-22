@@ -60,13 +60,14 @@ func Remind(spec string, texts []string, days int) *Task {
 					continue
 				}
 
-				if chatData.Current.Deadline.Truncate(24 * time.Hour).Equal(deadlineTarget) {
+				current := chatData.CurrentBook()
+				if current != nil && current.Deadline != nil && current.Deadline.Truncate(24*time.Hour).Equal(deadlineTarget) {
 					randomIndex := rand.Intn(len(texts))
 					randomMessage := texts[randomIndex]
 
 					logger.WithField("file", file).Infof(
 						"Remind to chat %s about deadline in %d days with book \"%s\"",
-						file, days, chatData.Current.Book.Name,
+						file, days, current.DisplayName(),
 					)
 					lnb.SendPlainMessage(chatId, randomMessage)
 				}

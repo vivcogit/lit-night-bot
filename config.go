@@ -14,10 +14,7 @@ func GetConfig() *Config {
 		panic("failed to retrieve the Telegram token from the environment")
 	}
 
-	dataPath := os.Getenv("DATA_PATH")
-	if dataPath == "" {
-		panic("failed to retrieve path to storage chats data")
-	}
+	dataPath := GetDataPath()
 	isDebug := os.Getenv("DEBUG") == "1"
 
 	return &Config{
@@ -25,4 +22,12 @@ func GetConfig() *Config {
 		dataPath: dataPath,
 		isDebug:  isDebug,
 	}
+}
+
+func GetDataPath() string {
+	dataPath := os.Getenv("DATA_PATH")
+	if dataPath == "" {
+		panic("failed to retrieve path to storage chats data")
+	}
+	return dataPath
 }

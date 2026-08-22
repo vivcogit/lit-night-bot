@@ -1,18 +1,19 @@
 package bot
 
 import (
-	chatdata "lit-night-bot/chat-data"
 	io "lit-night-bot/io"
-	"lit-night-bot/utils"
+	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 )
 
 type LitNightBot struct {
-	bot    *tgbotapi.BotAPI
-	iocd   *io.IoChatData
-	logger *logrus.Entry
+	bot               *tgbotapi.BotAPI
+	iocd              *io.IoChatData
+	logger            *logrus.Entry
+	locks             sync.Map
+	historySelections sync.Map
 }
 
 func chatIDFromUpdate(update *tgbotapi.Update, log *logrus.Entry) (chatID int64, ok bool) {
@@ -45,7 +46,7 @@ func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isD
 
 	logger.WithField("username", bot.Self.UserName).Info("Bot authorized")
 
-	return &LitNightBot{bot, iocd, logger}, nil
+	return &LitNightBot{bot: bot, iocd: iocd, logger: logger}, nil
 }
 
 func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {
@@ -56,6 +57,14 @@ func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {
 				return
 			}
 			logger := lnb.getUserLogger(chatID, &update)
+			lockValue, _ := lnb.locks.LoadOrStore(chatID, &sync.Mutex{})
+			chatLock := lockValue.(*sync.Mutex)
+			chatLock.Lock()
+			defer chatLock.Unlock()
+
+			if !lnb.allowUpdate(&update, logger) {
+				return
+			}
 
 			if update.CallbackQuery != nil {
 				lnb.handleCallbackQuery(&update, logger)
@@ -94,12 +103,16 @@ func (lnb *LitNightBot) handleStart(update *tgbotapi.Update, logger *logrus.Entr
 
 	logger.Info("Handling /start command")
 
-	filePath := lnb.iocd.GetChatDataFilePath(chatID)
-	exists, _ := utils.CheckFileExists(filePath)
-
-	if !exists {
-		var chatData chatdata.ChatData
-		lnb.iocd.SetChatData(chatID, &chatData)
+	lnb.iocd.GetOrCreateChatData(chatID)
+	if chat := update.FromChat(); chat != nil && chat.IsPrivate() {
+		lnb.SendPlainMessage(
+			chatID,
+			"Привет! ✨\n"+
+				"Это твой личный читательский дневник. Здесь можно вести вишлист, "+
+				"выбирать текущую книгу, сохранять историю чтения и ставить личные оценки. 📚",
+		)
+		logger.Info("Personal diary start message sent")
+		return
 	}
 
 	lnb.SendPlainMessage(
@@ -118,9 +131,19 @@ func (lnb *LitNightBot) InitMenu() {
 		{Command: "menu", Description: "показать меню"},
 	}
 
-	_, err := lnb.bot.Request(tgbotapi.NewSetMyCommands(commands...))
-	if err != nil {
-		lnb.logger.WithError(err).Fatal("Failed to set bot commands")
+	scopes := []tgbotapi.BotCommandScope{
+		tgbotapi.NewBotCommandScopeDefault(),
+		tgbotapi.NewBotCommandScopeAllPrivateChats(),
+		tgbotapi.NewBotCommandScopeAllGroupChats(),
+		tgbotapi.NewBotCommandScopeAllChatAdministrators(),
+	}
+	for _, scope := range scopes {
+		if _, err := lnb.bot.Request(tgbotapi.NewDeleteMyCommandsWithScope(scope)); err != nil {
+			lnb.logger.WithError(err).WithField("scope", scope.Type).Fatal("Failed to delete old bot commands")
+		}
+		if _, err := lnb.bot.Request(tgbotapi.NewSetMyCommandsWithScope(scope, commands...)); err != nil {
+			lnb.logger.WithError(err).WithField("scope", scope.Type).Fatal("Failed to set bot commands")
+		}
 	}
 	lnb.logger.Info("Menu initialized")
 }

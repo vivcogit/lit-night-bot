@@ -5,6 +5,7 @@ import (
 	"lit-night-bot/cron"
 	io "lit-night-bot/io"
 	"lit-night-bot/tasks"
+	"os"
 
 	"github.com/sirupsen/logrus"
 )
@@ -33,6 +34,9 @@ func getLogger(isDebug bool) *logrus.Entry {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(runMigrationCommand(os.Args[2:]))
+	}
 	config := GetConfig()
 
 	logger := getLogger(config.isDebug)

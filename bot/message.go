@@ -28,7 +28,16 @@ func (lnb *LitNightBot) sendProgressJokes(chatId int64) {
 }
 
 func (lnb *LitNightBot) editMessage(chatId int64, msgID int, text string, buttons [][]tgbotapi.InlineKeyboardButton) (tgbotapi.Message, error) {
+	return lnb.editMessageWithMode(chatId, msgID, text, buttons, "")
+}
+
+func (lnb *LitNightBot) editHTMLMessage(chatId int64, msgID int, text string, buttons [][]tgbotapi.InlineKeyboardButton) (tgbotapi.Message, error) {
+	return lnb.editMessageWithMode(chatId, msgID, text, buttons, tgbotapi.ModeHTML)
+}
+
+func (lnb *LitNightBot) editMessageWithMode(chatId int64, msgID int, text string, buttons [][]tgbotapi.InlineKeyboardButton, parseMode string) (tgbotapi.Message, error) {
 	editMsg := tgbotapi.NewEditMessageText(chatId, msgID, text)
+	editMsg.ParseMode = parseMode
 	if len(buttons) > 0 {
 		replyMarkup := tgbotapi.NewInlineKeyboardMarkup(buttons...)
 		editMsg.ReplyMarkup = &replyMarkup
@@ -60,13 +69,15 @@ func (lnb *LitNightBot) removeMessage(chatId int64, msgId int) error {
 }
 
 type SendMessageParams struct {
-	Text    string
-	Buttons [][]tgbotapi.InlineKeyboardButton
-	ReplyTo int
+	Text      string
+	Buttons   [][]tgbotapi.InlineKeyboardButton
+	ReplyTo   int
+	ParseMode string
 }
 
 func (lnb *LitNightBot) sendMessage(chatId int64, params SendMessageParams) (tgbotapi.Message, error) {
 	msg := tgbotapi.NewMessage(chatId, params.Text)
+	msg.ParseMode = params.ParseMode
 	if len(params.Buttons) > 0 {
 		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(params.Buttons...)
 	}
@@ -86,4 +97,8 @@ func (lnb *LitNightBot) sendMessage(chatId int64, params SendMessageParams) (tgb
 
 func (lnb *LitNightBot) SendPlainMessage(chatId int64, text string) (tgbotapi.Message, error) {
 	return lnb.sendMessage(chatId, SendMessageParams{Text: text})
+}
+
+func (lnb *LitNightBot) SendHTMLMessage(chatId int64, text string, buttons [][]tgbotapi.InlineKeyboardButton) (tgbotapi.Message, error) {
+	return lnb.sendMessage(chatId, SendMessageParams{Text: text, Buttons: buttons, ParseMode: tgbotapi.ModeHTML})
 }

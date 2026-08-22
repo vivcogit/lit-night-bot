@@ -4,19 +4,45 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 func WriteJSONToFile[T any](filePath string, data T) error {
-	file, err := os.Create(filePath)
-	if err != nil {
-		return fmt.Errorf("ошибка при создании файла: %w", err)
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("ошибка при создании каталога: %w", err)
 	}
-	defer file.Close()
+
+	file, err := os.CreateTemp(dir, ".chat-data-*.tmp")
+	if err != nil {
+		return fmt.Errorf("ошибка при создании временного файла: %w", err)
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	mode := os.FileMode(0o644)
+	if existing, statErr := os.Stat(filePath); statErr == nil {
+		mode = existing.Mode().Perm()
+	}
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		return fmt.Errorf("ошибка настройки прав файла: %w", err)
+	}
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(data); err != nil {
+		file.Close()
 		return fmt.Errorf("ошибка при записи данных в файл: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return fmt.Errorf("ошибка синхронизации файла: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("ошибка закрытия файла: %w", err)
+	}
+	if err := os.Rename(tempPath, filePath); err != nil {
+		return fmt.Errorf("ошибка атомарной замены файла: %w", err)
 	}
 
 	return nil

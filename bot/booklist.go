@@ -83,8 +83,14 @@ func GetBooklistString[T chatdata.HasBook](booklist *[]T) string {
 
 func GetBooklistPage[T chatdata.HasBook](booklist *[]T, page int) ([]T, int, bool) {
 	totalBooks := len(*booklist)
+	if totalBooks == 0 {
+		return []T{}, 0, true
+	}
 
 	maxPage := (totalBooks+BooksPerPage-1)/BooksPerPage - 1
+	if page < 0 {
+		page = 0
+	}
 
 	if page > maxPage {
 		page = maxPage
