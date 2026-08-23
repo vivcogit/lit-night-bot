@@ -168,6 +168,76 @@ func TestDeleteMessageAcceptsBooleanTelegramResponse(t *testing.T) {
 	}
 }
 
+func TestReviewDecisionReplacesPersonalizedPrompt(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		wantText string
+		action   func(*LitNightBot, *tgbotapi.Update, *logrus.Entry)
+	}{
+		{
+			name:     "remind",
+			wantText: reviewRemindedText,
+			action: func(lnb *LitNightBot, update *tgbotapi.Update, logger *logrus.Entry) {
+				lnb.scheduleReviewReminder(update, "done0001", true, logger)
+			},
+		},
+		{
+			name:     "skip",
+			wantText: reviewSkippedText,
+			action: func(lnb *LitNightBot, update *tgbotapi.Update, logger *logrus.Entry) {
+				lnb.skipReview(update, "done0001", true, logger)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lnb, storage, recorder := newReviewIntegrationBot(t)
+			now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+			data := chatdata.NewChatData()
+			data.Chat = &chatdata.ChatMetadata{ID: 42, Type: "private"}
+			data.Books = append(data.Books, chatdata.ClubBook{
+				ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted, ReviewRequestSentAt: &now,
+			})
+			if err := storage.SaveChatData(42, data); err != nil {
+				t.Fatal(err)
+			}
+			update := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{
+				ID: "callback", From: &tgbotapi.User{ID: 42, FirstName: "Анна"},
+				Message: &tgbotapi.Message{MessageID: 77, Chat: &tgbotapi.Chat{ID: 42, Type: "private"}},
+			}}
+
+			test.action(lnb, update, lnb.logger)
+
+			if got := recorder.editIDsSnapshot(); len(got) != 1 || got[0] != "77" {
+				t.Fatalf("edited messages = %#v, want prompt 77", got)
+			}
+			if got := recorder.snapshot(); countTextsContaining(got, test.wantText) != 1 {
+				t.Fatalf("replacement text is missing: %#v", got)
+			}
+		})
+	}
+}
+
+func TestReviewDecisionKeepsSharedGroupPrompt(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := scheduledReviewData(now)
+	data.Books[0].ReviewRequestSentAt = &now
+	data.Books[0].ReviewRequestDueAt = nil
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	update := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{
+		ID: "callback", From: &tgbotapi.User{ID: 42, FirstName: "Анна"},
+		Message: &tgbotapi.Message{MessageID: 77, Chat: &tgbotapi.Chat{ID: -42, Type: "group"}},
+	}}
+
+	lnb.skipReview(update, "done0001", false, lnb.logger)
+
+	if got := recorder.editIDsSnapshot(); len(got) != 0 {
+		t.Fatalf("shared group prompt was edited: %#v", got)
+	}
+}
+
 func TestChoosingNextBookFlushesPendingReviewImmediately(t *testing.T) {
 	lnb, storage, recorder := newReviewIntegrationBot(t)
 	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)

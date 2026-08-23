@@ -247,7 +247,7 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
 			return
 		}
-		lnb.scheduleReviewReminder(update, cbParams[0], logger)
+		lnb.scheduleReviewReminder(update, cbParams[0], len(cbParams) > 1, logger)
 	case CBReviewSkip:
 		if len(cbParams) < 1 {
 			return
@@ -255,7 +255,7 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
 			return
 		}
-		lnb.skipReview(update, cbParams[0], logger)
+		lnb.skipReview(update, cbParams[0], len(cbParams) > 1, logger)
 	case CBReviewDelete:
 		if len(cbParams) < 1 {
 			return

@@ -400,7 +400,12 @@ func (lnb *LitNightBot) handleReviewReply(message *tgbotapi.Message, original st
 	return true
 }
 
-func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID string, logger *logrus.Entry) {
+const (
+	reviewSkippedText  = "Если передумаете, отзыв можно оставить в карточке книги."
+	reviewRemindedText = "⏰ Напомню об отзыве позже.\n\nЕсли захотите написать его раньше, отзыв можно оставить в карточке книги."
+)
+
+func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID string, replacePrompt bool, logger *logrus.Entry) {
 	message := update.CallbackQuery.Message
 	user := update.CallbackQuery.From
 	if user == nil || user.IsBot {
@@ -429,9 +434,14 @@ func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID s
 		answer = "Напомню завтра об отзыве"
 	}
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, answer))
+	if replacePrompt {
+		if _, err := lnb.editMessage(message.Chat.ID, message.MessageID, reviewRemindedText, nil); err != nil {
+			logger.WithError(err).Warn("Failed to replace review reminder prompt")
+		}
+	}
 }
 
-func (lnb *LitNightBot) skipReview(update *tgbotapi.Update, bookID string, logger *logrus.Entry) {
+func (lnb *LitNightBot) skipReview(update *tgbotapi.Update, bookID string, replacePrompt bool, logger *logrus.Entry) {
 	user := update.CallbackQuery.From
 	if user == nil {
 		return
@@ -448,6 +458,11 @@ func (lnb *LitNightBot) skipReview(update *tgbotapi.Update, bookID string, logge
 		return
 	}
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Хорошо, напоминать не буду"))
+	if replacePrompt {
+		if _, err := lnb.editMessage(chatID, update.CallbackQuery.Message.MessageID, reviewSkippedText, nil); err != nil {
+			logger.WithError(err).Warn("Failed to replace skipped review prompt")
+		}
+	}
 }
 
 func (lnb *LitNightBot) deleteReview(update *tgbotapi.Update, bookID string, logger *logrus.Entry) {
@@ -571,7 +586,11 @@ func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData,
 	if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
 		return false, false
 	}
-	message, err := lnb.SendHTMLMessage(chatID, renderReviewRequest(book), reviewRequestButtons(book.ID))
+	buttons := reviewRequestButtons(book.ID)
+	if data.IsPrivateChat(chatID) {
+		buttons = reviewRequestButtonsForUser(book.ID, chatID)
+	}
+	message, err := lnb.SendHTMLMessage(chatID, renderReviewRequest(book), buttons)
 	if err != nil {
 		logger.WithError(err).WithField("book_id", book.ID).Error("Failed to send review request")
 		policy, retryAt := classifyTelegramFailure(err, lnb.reviewFailureTime(at))
@@ -708,9 +727,6 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 				}
 				private := data.IsPrivateChat(chatID)
 				buttons := reviewRequestButtonsForUser(book.ID, reminderUserID)
-				if private {
-					buttons = reviewRequestButtons(book.ID)
-				}
 				message, err := lnb.SendHTMLMessage(chatID, renderReviewReminderForChat(book, *reminder, private), buttons)
 				if err != nil {
 					logger.WithError(err).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to send review reminder")

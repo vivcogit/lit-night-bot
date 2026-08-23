@@ -91,6 +91,16 @@ func TestPersonalReviewReminderDoesNotMentionUser(t *testing.T) {
 	}
 }
 
+func TestPersonalizedReviewPromptActionsAreBoundToUser(t *testing.T) {
+	buttons := reviewRequestButtonsForUser("book0001", 55)
+	for _, row := range buttons {
+		action, params, err := GetCallbackParam(*row[0].CallbackData)
+		if err != nil || len(params) != 2 || params[1] != "55" {
+			t.Fatalf("action %q is not bound to user: %#v, %v", action, params, err)
+		}
+	}
+}
+
 func TestPersonalRatingPanelCombinesRatingAndReview(t *testing.T) {
 	book := reviewTestBook()
 	book.Reviews = nil
