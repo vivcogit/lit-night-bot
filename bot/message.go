@@ -46,10 +46,10 @@ func (lnb *LitNightBot) editMessageWithMode(chatId int64, msgID int, text string
 	}
 
 	lnb.logger.WithFields(logrus.Fields{
-		"chat_id": chatId,
-		"msg_id":  msgID,
-		"text":    text,
-		"buttons": buttons,
+		"chat_id":     chatId,
+		"msg_id":      msgID,
+		"text_bytes":  len(text),
+		"button_rows": len(buttons),
 	}).Info("Editing message")
 
 	return lnb.bot.Send(editMsg)
@@ -86,10 +86,10 @@ func (lnb *LitNightBot) sendMessage(chatId int64, params SendMessageParams) (tgb
 	}
 
 	lnb.logger.WithFields(logrus.Fields{
-		"chat_id":  chatId,
-		"text":     params.Text,
-		"buttons":  params.Buttons,
-		"reply_to": params.ReplyTo,
+		"chat_id":     chatId,
+		"text_bytes":  len(params.Text),
+		"button_rows": len(params.Buttons),
+		"reply_to":    params.ReplyTo,
 	}).Info("Sending message")
 
 	return lnb.bot.Send(msg)

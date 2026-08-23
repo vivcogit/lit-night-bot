@@ -508,6 +508,7 @@ func (lnb *LitNightBot) confirmRatingClose(update *tgbotapi.Update, params []str
 		return
 	}
 	book.ScheduleReviewRequest(now.Add(reviewRequestDelay))
+	sendReviewImmediately := data.CurrentBook() != nil
 	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to close ratings")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось сохранить итог"))
@@ -517,6 +518,9 @@ func (lnb *LitNightBot) confirmRatingClose(update *tgbotapi.Update, params []str
 	lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
 	if sourceMessageID > 0 {
 		lnb.editHTMLMessage(chatID, sourceMessageID, renderRatingResultWithNextBook(book, data), ratingResultButtonsWithNextBook(book, data))
+	}
+	if sendReviewImmediately {
+		_, _ = lnb.sendPendingReviewRequests(chatID, data, time.Now(), false, logger)
 	}
 }
 

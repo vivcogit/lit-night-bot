@@ -143,6 +143,16 @@ func bookCardButtonsForChat(book *chatdata.ClubBook, private bool, userID int64)
 			buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("💬 Отзывы (%d)", len(book.Reviews)), GetCallbackParamStr(CBReviewList, book.ID, "0")),
 			))
+			if book.ReviewCollectionOpen() {
+				buttons = append(buttons,
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData("✍️ Написать / изменить мой отзыв", GetCallbackParamStr(CBReviewWrite, book.ID)),
+					),
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить мой отзыв", GetCallbackParamStr(CBReviewDelete, book.ID, reviewSourceCard)),
+					),
+				)
+			}
 		}
 	}
 	buttons = append(buttons,

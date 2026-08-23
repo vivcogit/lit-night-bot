@@ -48,6 +48,10 @@ type reviewDeliveryKey struct {
 	userID int64
 }
 
+func reviewChatDeliveryKey(chatID int64) reviewDeliveryKey {
+	return reviewDeliveryKey{chatID: chatID}
+}
+
 func isTelegramRateLimit(err error) bool {
 	var apiError *tgbotapi.Error
 	return errors.As(err, &apiError) && apiError.Code == 429
@@ -56,14 +60,16 @@ func isTelegramRateLimit(err error) bool {
 func (lnb *LitNightBot) automatedReviewDeliveryAllowed(key reviewDeliveryKey, at time.Time) bool {
 	lnb.reviewRetryMu.Lock()
 	defer lnb.reviewRetryMu.Unlock()
-	retryAt, exists := lnb.reviewRetryAt[key]
-	if !exists {
-		return true
+	for _, candidate := range []reviewDeliveryKey{reviewChatDeliveryKey(key.chatID), key} {
+		retryAt, exists := lnb.reviewRetryAt[candidate]
+		if !exists {
+			continue
+		}
+		if at.Before(retryAt) {
+			return false
+		}
+		delete(lnb.reviewRetryAt, candidate)
 	}
-	if at.Before(retryAt) {
-		return false
-	}
-	delete(lnb.reviewRetryAt, key)
 	return true
 }
 
@@ -476,7 +482,7 @@ func (lnb *LitNightBot) skipReview(update *tgbotapi.Update, bookID string, repla
 	}
 }
 
-func (lnb *LitNightBot) deleteReview(update *tgbotapi.Update, bookID string, logger *logrus.Entry) {
+func (lnb *LitNightBot) deleteReview(update *tgbotapi.Update, bookID string, sourceView string, logger *logrus.Entry) {
 	user := update.CallbackQuery.From
 	if user == nil {
 		return
@@ -493,7 +499,7 @@ func (lnb *LitNightBot) deleteReview(update *tgbotapi.Update, bookID string, log
 		return
 	}
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Отзыв удалён"))
-	if update.CallbackQuery.Message.Chat.IsPrivate() {
+	if update.CallbackQuery.Message.Chat.IsPrivate() || sourceView == reviewSourceCard {
 		lnb.showBookCardInPlace(update.CallbackQuery.Message, book.ID)
 	} else {
 		lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
@@ -610,6 +616,7 @@ func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData,
 			rateLimited := isTelegramRateLimit(err)
 			if rateLimited {
 				lnb.rememberAutomatedReviewRetry(deliveryKey, retryAt)
+				lnb.rememberAutomatedReviewRetry(reviewChatDeliveryKey(chatID), retryAt)
 			}
 			book.DeferReviewRequest(retryAt)
 			if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
@@ -619,6 +626,9 @@ func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData,
 				return false, false
 			}
 			lnb.clearAutomatedReviewRetry(deliveryKey)
+			if rateLimited {
+				return false, false
+			}
 		case telegramFailureTerminal:
 			lnb.clearAutomatedReviewRetry(deliveryKey)
 			book.CancelPendingReviewRequest()
@@ -747,6 +757,7 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 						rateLimited := isTelegramRateLimit(err)
 						if rateLimited {
 							lnb.rememberAutomatedReviewRetry(deliveryKey, retryAt)
+							lnb.rememberAutomatedReviewRetry(reviewChatDeliveryKey(chatID), retryAt)
 						}
 						reminder.ReleaseDeliveryClaim()
 						reminder.DueAt = retryAt
@@ -757,6 +768,9 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 							return false, false, false
 						}
 						lnb.clearAutomatedReviewRetry(deliveryKey)
+						if rateLimited {
+							return false, false, false
+						}
 						return true, false, true
 					case telegramFailureTerminal:
 						lnb.clearAutomatedReviewRetry(deliveryKey)

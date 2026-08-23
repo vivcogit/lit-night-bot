@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -89,6 +90,45 @@ func TestPersonalBookCardShowsScheduledReviewReminder(t *testing.T) {
 	if strings.Contains(labels, "Напомнить") || !strings.Contains(labels, "Написать отзыв") {
 		t.Fatalf("unexpected reminder-state actions: %s", labels)
 	}
+}
+
+func TestGroupBookCardKeepsReviewEntryPoint(t *testing.T) {
+	book := ratingTestBook()
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	book.ReviewRequestSentAt = &now
+
+	buttons := bookCardButtonsForChat(book, false, 0)
+	labels := buttonLabels(buttons)
+	if !strings.Contains(labels, "Написать / изменить мой отзыв") {
+		t.Fatalf("group card has no persistent own-review action: %s", labels)
+	}
+	if !strings.Contains(labels, "Удалить мой отзыв") {
+		t.Fatalf("group card has no persistent own-review delete action: %s", labels)
+	}
+	for _, row := range buttons {
+		for _, button := range row {
+			if !strings.Contains(button.Text, "Удалить мой отзыв") {
+				continue
+			}
+			action, params, err := GetCallbackParam(*button.CallbackData)
+			if err != nil || action != CBReviewDelete || len(params) != 2 || params[1] != reviewSourceCard {
+				t.Fatalf("invalid group review delete callback: %q %#v %v", action, params, err)
+			}
+		}
+	}
+	for _, row := range buttons {
+		for _, button := range row {
+			if !strings.Contains(button.Text, "Написать / изменить") {
+				continue
+			}
+			action, params, err := GetCallbackParam(*button.CallbackData)
+			if err != nil || action != CBReviewWrite || len(params) != 1 || params[0] != book.ID {
+				t.Fatalf("invalid group review entry callback: %q %#v %v", action, params, err)
+			}
+			return
+		}
+	}
+	t.Fatal("group review entry button not found")
 }
 
 func TestPersonalBookCardFitsTelegramMessageLimit(t *testing.T) {

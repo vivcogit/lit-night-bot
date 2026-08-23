@@ -268,10 +268,13 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		if len(cbParams) < 1 {
 			return
 		}
-		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+		sourceView := ""
+		if len(cbParams) > 1 && cbParams[1] == reviewSourceCard {
+			sourceView = reviewSourceCard
+		} else if !lnb.reviewCallbackUserAllowed(update, cbParams) {
 			return
 		}
-		lnb.deleteReview(update, cbParams[0], logger)
+		lnb.deleteReview(update, cbParams[0], sourceView, logger)
 	case CBReviewList:
 		if len(cbParams) < 1 {
 			return

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func migratedHistoryFixture(t *testing.T) []chatdata.ClubBook {
@@ -92,5 +94,61 @@ func TestPersonalHistoryShowsOnlyOwnRating(t *testing.T) {
 	}
 	if strings.Contains(text, "8,5") || strings.Contains(text, "2 оценки") {
 		t.Fatalf("personal history exposes aggregate: %s", text)
+	}
+}
+
+func TestHistoryRemovalProtectsReviewsUntilConfirmed(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: -42, Type: "group", Title: "Клуб"}
+	data.Books = []chatdata.ClubBook{{
+		ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted, CompletedAt: &now,
+		ReviewRequestSentAt: &now,
+		Reviews:             []chatdata.Review{{ID: "review1", UserID: 1, DisplayName: "Анна", Text: "Отзыв", CreatedAt: now}},
+	}}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	message := &tgbotapi.Message{MessageID: 77, Chat: &tgbotapi.Chat{ID: -42, Type: "group"}}
+
+	lnb.handleHistoryRemoveBook(message, "remove", []string{"done0001", "0"}, lnb.logger)
+
+	if storage.GetChatData(-42).FindBook("done0001") == nil {
+		t.Fatal("review-only book was deleted without confirmation")
+	}
+	if texts := recorder.snapshot(); countTextsContaining(texts, "1 отзыв") != 1 {
+		t.Fatalf("confirmation does not mention the review: %#v", texts)
+	}
+
+	cancel := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{
+		ID: "cancel", Data: GetCallbackParamStr(CBHistoryRemoveCancel, "0"), From: &tgbotapi.User{ID: 1}, Message: message,
+	}}
+	lnb.handleCallbackQuery(cancel, lnb.logger)
+	if storage.GetChatData(-42).FindBook("done0001") == nil {
+		t.Fatal("cancel removed the book")
+	}
+
+	lnb.confirmHistoryRemoveBook(message, "confirm", []string{"done0001", "0"}, lnb.logger)
+	if storage.GetChatData(-42).FindBook("done0001") != nil {
+		t.Fatal("confirmed removal kept the book")
+	}
+}
+
+func TestHistoryRemovalListsMixedAssociatedData(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	book := &chatdata.ClubBook{
+		Status:              chatdata.StatusCompleted,
+		Ratings:             []chatdata.Rating{{UserID: 1, Value: 8}, {UserID: 2, Value: 9}},
+		RatingsClosedAt:     &now,
+		ReviewRequestSentAt: &now,
+		Reviews:             []chatdata.Review{{UserID: 1}},
+		ReviewReminders:     []chatdata.ReviewReminder{{UserID: 2}, {UserID: 3}},
+	}
+	joined := strings.Join(historyRemovalDetails(book), "|")
+	for _, expected := range []string{"2 оценки", "итог сбора оценок", "1 отзыв", "2 напоминания", "данные сбора отзывов"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("removal details miss %q: %s", expected, joined)
+		}
 	}
 }

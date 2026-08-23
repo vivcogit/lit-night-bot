@@ -319,6 +319,119 @@ func TestChoosingNextBookFlushesPendingReviewImmediately(t *testing.T) {
 	}
 }
 
+func TestClosingRatingsFlushesReviewWhenNextBookAlreadySelected(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: -42, Type: "group", Title: "Клуб"}
+	data.Books = []chatdata.ClubBook{
+		{ID: "done0001", Title: "Обсуждённая", Status: chatdata.StatusCompleted, Ratings: []chatdata.Rating{{UserID: 1, DisplayName: "Анна", Value: 8, CreatedAt: now, UpdatedAt: now}}},
+		{ID: "read0001", Title: "Следующая", Status: chatdata.StatusReading, StartedAt: &now},
+	}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	update := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{
+		ID: "close", From: &tgbotapi.User{ID: 1, FirstName: "Анна"},
+		Message: &tgbotapi.Message{MessageID: 77, Chat: &tgbotapi.Chat{ID: -42, Type: "group"}},
+	}}
+
+	lnb.confirmRatingClose(update, []string{"done0001", "1", "0"}, lnb.logger)
+
+	if countTextsContaining(recorder.snapshot(), "Короткое послесловие") != 1 {
+		t.Fatalf("review request was not flushed after closing ratings: %#v", recorder.snapshot())
+	}
+	if saved := storage.GetChatData(-42).FindBook("done0001"); saved.ReviewRequestSentAt == nil {
+		t.Fatalf("review request was not finalized: %#v", saved)
+	}
+}
+
+func TestRateLimitStopsRemainingDeliveriesInChat(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	recorder.failAPI = 1
+	recorder.failCode = 429
+	recorder.retryAfter = 600
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := scheduledReviewData(now)
+	dueAt := now.Add(reviewRequestDelay)
+	closedAt := now
+	data.Books = append(data.Books, chatdata.ClubBook{
+		ID: "done0002", Title: "Вторая", Status: chatdata.StatusCompleted,
+		RatingsClosedAt: &closedAt, ReviewRequestDueAt: &dueAt,
+	})
+	if err := data.FindBook("done0001").SetReviewReminder(2, "Борис", "", dueAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+
+	lnb.ProcessDueReviews(dueAt, lnb.logger)
+
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("rate-limited batch continued with %d successful deliveries", got)
+	}
+	saved := storage.GetChatData(-42)
+	if second := saved.FindBook("done0002"); second.ReviewRequestSentAt != nil || second.ReviewRequestClaimedAt != nil {
+		t.Fatalf("second request was touched after 429: %#v", second)
+	}
+	if reminders := saved.FindBook("done0001").ReviewReminders; len(reminders) != 1 || reminders[0].DeliveryClaimedAt != nil {
+		t.Fatalf("reminder was touched after 429: %#v", reminders)
+	}
+
+	lnb.ProcessDueReviews(dueAt.Add(9*time.Minute), lnb.logger)
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("chat-wide RetryAfter gate allowed %d early deliveries", got)
+	}
+}
+
+func TestMessageLogsDoNotContainPayload(t *testing.T) {
+	lnb, _, _ := newReviewIntegrationBot(t)
+	var logs bytes.Buffer
+	lnb.logger.Logger.SetOutput(&logs)
+	secret := "личный отзыв, которого не должно быть в логах"
+
+	if _, err := lnb.SendPlainMessage(42, secret); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lnb.editMessage(42, 77, secret, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), secret) {
+		t.Fatalf("message payload leaked into logs: %s", logs.String())
+	}
+}
+
+func TestDeletingReviewFromGroupCardKeepsCardOpen(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: -42, Type: "group", Title: "Клуб"}
+	data.Books = []chatdata.ClubBook{{
+		ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted, ReviewRequestSentAt: &now,
+		Reviews: []chatdata.Review{{ID: "review1", UserID: 1, DisplayName: "Анна", Text: "Отзыв", CreatedAt: now}},
+	}}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	update := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{
+		ID: "delete", From: &tgbotapi.User{ID: 1, FirstName: "Анна"},
+		Message: &tgbotapi.Message{MessageID: 77, Chat: &tgbotapi.Chat{ID: -42, Type: "group"}},
+	}}
+
+	lnb.deleteReview(update, "done0001", reviewSourceCard, lnb.logger)
+
+	if review := storage.GetChatData(-42).FindBook("done0001").ReviewByUser(1); review != nil {
+		t.Fatalf("review was not deleted: %#v", review)
+	}
+	if got := recorder.editIDsSnapshot(); len(got) != 1 || got[0] != "77" {
+		t.Fatalf("group card was not refreshed in place: %#v", got)
+	}
+	if recorder.deletions != 0 {
+		t.Fatal("group card message was deleted")
+	}
+}
+
 func TestAddingWishlistBookAloneDoesNotFlushReview(t *testing.T) {
 	lnb, storage, recorder := newReviewIntegrationBot(t)
 	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
