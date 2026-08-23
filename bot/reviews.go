@@ -325,13 +325,12 @@ func (lnb *LitNightBot) showReviews(message *tgbotapi.Message, bookID string, pa
 	return err
 }
 
-func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData, book *chatdata.ClubBook, at time.Time, logger *logrus.Entry) bool {
+func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData, book *chatdata.ClubBook, at time.Time, logger *logrus.Entry) (bool, bool) {
 	if book == nil || !book.ClaimReviewRequest(at, reviewDeliveryClaimLease) {
-		return false
+		return false, true
 	}
 	if !lnb.persistReviewState(chatID, data, logger) {
-		book.ReleaseReviewRequestClaim()
-		return false
+		return false, false
 	}
 	message, err := lnb.SendHTMLMessage(chatID, renderReviewRequest(book), reviewRequestButtons(book.ID))
 	if err != nil {
@@ -339,26 +338,29 @@ func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData,
 		policy, retryAt := classifyTelegramFailure(err, at)
 		switch policy {
 		case telegramFailureRetry:
-			book.ReleaseReviewRequestClaim()
-			book.ReviewRequestDueAt = &retryAt
-			lnb.persistReviewState(chatID, data, logger)
+			book.DeferReviewRequest(retryAt)
+			if !lnb.persistReviewState(chatID, data, logger) {
+				return false, false
+			}
 		case telegramFailureTerminal:
 			book.CancelPendingReviewRequest()
-			lnb.persistReviewState(chatID, data, logger)
+			if !lnb.persistReviewState(chatID, data, logger) {
+				return false, false
+			}
 			logger.WithField("book_id", book.ID).Error("Review request delivery was permanently rejected; cancelling pending delivery")
 		default:
 			logger.WithField("book_id", book.ID).Warn("Review request delivery is ambiguous; keeping claim until lease expires")
 		}
-		return false
+		return false, true
 	}
 	book.MarkReviewRequestSent(at, message.MessageID)
 	if !lnb.persistReviewState(chatID, data, logger) {
 		if deleteErr := lnb.removeMessage(chatID, message.MessageID); deleteErr != nil {
 			logger.WithError(deleteErr).WithField("book_id", book.ID).Error("Failed to compensate unpersisted review request")
 		}
-		return false
+		return false, false
 	}
-	return true
+	return true, true
 }
 
 func (lnb *LitNightBot) persistReviewState(chatID int64, data *chatdata.ChatData, logger *logrus.Entry) bool {
@@ -376,7 +378,7 @@ func (lnb *LitNightBot) persistReviewState(chatID int64, data *chatdata.ChatData
 	return false
 }
 
-func (lnb *LitNightBot) sendPendingReviewRequests(chatID int64, data *chatdata.ChatData, at time.Time, dueOnly bool, logger *logrus.Entry) int {
+func (lnb *LitNightBot) sendPendingReviewRequests(chatID int64, data *chatdata.ChatData, at time.Time, dueOnly bool, logger *logrus.Entry) (int, bool) {
 	sent := 0
 	for index := range data.Books {
 		book := &data.Books[index]
@@ -386,18 +388,22 @@ func (lnb *LitNightBot) sendPendingReviewRequests(chatID int64, data *chatdata.C
 		if dueOnly && book.ReviewRequestDueAt.After(at) {
 			continue
 		}
-		if lnb.sendReviewRequest(chatID, data, book, at, logger) {
+		wasSent, usable := lnb.sendReviewRequest(chatID, data, book, at, logger)
+		if !usable {
+			return sent, false
+		}
+		if wasSent {
 			sent++
 		}
 	}
-	return sent
+	return sent, true
 }
 
 func renderReviewReminder(book *chatdata.ClubBook, reminder chatdata.ReviewReminder) string {
 	return telegramMentionHTML(reminder.UserID, reminder.DisplayName) + ", напоминаю об отзыве о книге «" + html.EscapeString(reviewBookName(book)) + "». Хотите написать его сейчас?"
 }
 
-func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.ChatData, at time.Time, logger *logrus.Entry) int {
+func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.ChatData, at time.Time, logger *logrus.Entry) (int, bool) {
 	sent := 0
 	for bookIndex := range data.Books {
 		book := &data.Books[bookIndex]
@@ -410,7 +416,9 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 			}
 			if book.ReviewByUser(reminderUserID) != nil {
 				book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
-				lnb.persistReviewState(chatID, data, logger)
+				if !lnb.persistReviewState(chatID, data, logger) {
+					return sent, false
+				}
 				continue
 			}
 			if !reminder.ClaimDelivery(at, reviewDeliveryClaimLease) {
@@ -419,7 +427,7 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 			}
 			if !lnb.persistReviewState(chatID, data, logger) {
 				reminder.ReleaseDeliveryClaim()
-				return sent
+				return sent, false
 			}
 			message, err := lnb.SendHTMLMessage(chatID, renderReviewReminder(book, *reminder), reviewRequestButtonsForUser(book.ID, reminderUserID))
 			if err != nil {
@@ -429,11 +437,15 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 				case telegramFailureRetry:
 					reminder.ReleaseDeliveryClaim()
 					reminder.DueAt = retryAt
-					lnb.persistReviewState(chatID, data, logger)
+					if !lnb.persistReviewState(chatID, data, logger) {
+						return sent, false
+					}
 					reminderIndex++
 				case telegramFailureTerminal:
 					book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
-					lnb.persistReviewState(chatID, data, logger)
+					if !lnb.persistReviewState(chatID, data, logger) {
+						return sent, false
+					}
 					logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Review reminder was permanently rejected; cancelling reminder")
 				default:
 					logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Warn("Review reminder delivery is ambiguous; keeping claim until lease expires")
@@ -447,11 +459,11 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 				if deleteErr := lnb.removeMessage(chatID, message.MessageID); deleteErr != nil {
 					logger.WithError(deleteErr).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to compensate unpersisted review reminder")
 				}
-				return sent
+				return sent, false
 			}
 		}
 	}
-	return sent
+	return sent, true
 }
 
 func (lnb *LitNightBot) ProcessDueReviews(at time.Time, logger *logrus.Entry) {
@@ -483,8 +495,10 @@ func (lnb *LitNightBot) ProcessDueReviews(at time.Time, logger *logrus.Entry) {
 			chatLock.Unlock()
 			continue
 		}
-		lnb.sendPendingReviewRequests(chatID, data, at, true, logger)
-		lnb.sendDueReviewReminders(chatID, data, at, logger)
+		_, usable := lnb.sendPendingReviewRequests(chatID, data, at, true, logger)
+		if usable {
+			_, _ = lnb.sendDueReviewReminders(chatID, data, at, logger)
+		}
 		chatLock.Unlock()
 	}
 }

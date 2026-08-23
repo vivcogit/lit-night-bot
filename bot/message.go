@@ -61,8 +61,8 @@ func (lnb *LitNightBot) removeMessage(chatId int64, msgId int) error {
 		"msg_id":  msgId,
 	}).Info("Removing message")
 
-	msg, err := lnb.bot.Send(tgbotapi.NewDeleteMessage(chatId, msgId))
-	if err != nil && msg.MessageID == 0 {
+	_, err := lnb.bot.Request(tgbotapi.NewDeleteMessage(chatId, msgId))
+	if err != nil {
 		lnb.logger.WithError(err).WithField("msg_id", msgId).Error("Failed to delete message")
 	}
 	return err

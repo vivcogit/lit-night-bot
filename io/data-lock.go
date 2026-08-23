@@ -3,6 +3,7 @@ package io
 import (
 	"errors"
 	"fmt"
+	"lit-night-bot/utils"
 	"os"
 	"path/filepath"
 
@@ -21,6 +22,9 @@ func (iocd *IoChatData) TryAcquireDataDirectoryLock() (*DataDirectoryLock, error
 	lockDir := filepath.Join(iocd.dataPath, "_migration")
 	if err := os.MkdirAll(lockDir, 0o700); err != nil {
 		return nil, fmt.Errorf("не удалось создать каталог блокировки: %w", err)
+	}
+	if err := utils.SyncDirectory(iocd.dataPath); err != nil {
+		return nil, fmt.Errorf("не удалось синхронизировать каталог блокировки: %w", err)
 	}
 	file, err := os.OpenFile(filepath.Join(lockDir, "writer.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {

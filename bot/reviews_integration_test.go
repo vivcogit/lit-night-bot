@@ -10,6 +10,7 @@ import (
 	chatio "lit-night-bot/io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -20,12 +21,14 @@ import (
 )
 
 type telegramRecorder struct {
-	mu         sync.Mutex
-	texts      []string
-	failSends  int
-	failAPI    int
-	failCode   int
-	retryAfter int
+	mu          sync.Mutex
+	texts       []string
+	failSends   int
+	failAPI     int
+	failCode    int
+	retryAfter  int
+	deletions   int
+	onFirstSend func()
 }
 
 func (recorder *telegramRecorder) Do(request *http.Request) (*http.Response, error) {
@@ -34,6 +37,12 @@ func (recorder *telegramRecorder) Do(request *http.Request) (*http.Response, err
 		return telegramHTTPResponse(request, result), nil
 	}
 	_ = request.ParseForm()
+	if strings.HasSuffix(request.URL.Path, "/deleteMessage") {
+		recorder.mu.Lock()
+		recorder.deletions++
+		recorder.mu.Unlock()
+		return telegramHTTPResponse(request, `{"ok":true,"result":true}`), nil
+	}
 	text := request.FormValue("text")
 	recorder.mu.Lock()
 	if recorder.failSends > 0 {
@@ -54,7 +63,12 @@ func (recorder *telegramRecorder) Do(request *http.Request) (*http.Response, err
 	}
 	recorder.texts = append(recorder.texts, text)
 	messageID := len(recorder.texts)
+	hook := recorder.onFirstSend
+	recorder.onFirstSend = nil
 	recorder.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	result = fmt.Sprintf(`{"ok":true,"result":{"message_id":%d,"date":1,"chat":{"id":-42,"type":"group"},"text":%q}}`, messageID, text)
 	return telegramHTTPResponse(request, result), nil
 }
@@ -120,6 +134,16 @@ func TestDueReviewRequestIsSentOnceAfterFifteenMinutes(t *testing.T) {
 	saved := storage.GetChatData(-42).FindBook("done0001")
 	if saved.ReviewRequestSentAt == nil || saved.ReviewRequestDueAt != nil || saved.ReviewRequestClaimedAt != nil {
 		t.Fatalf("delivery state was not finalized: %#v", saved)
+	}
+}
+
+func TestDeleteMessageAcceptsBooleanTelegramResponse(t *testing.T) {
+	lnb, _, recorder := newReviewIntegrationBot(t)
+	if err := lnb.removeMessage(-42, 10); err != nil {
+		t.Fatalf("successful deleteMessage returned an error: %v", err)
+	}
+	if recorder.deletions != 1 {
+		t.Fatalf("delete requests = %d, want 1", recorder.deletions)
 	}
 }
 
@@ -265,8 +289,14 @@ func TestTelegramRateLimitDefersRetry(t *testing.T) {
 	failedAt := now.Add(reviewRequestDelay)
 	lnb.ProcessDueReviews(failedAt, lnb.logger)
 	deferred := storage.GetChatData(-42).FindBook("done0001")
-	if deferred.ReviewRequestClaimedAt != nil || deferred.ReviewRequestDueAt == nil || !deferred.ReviewRequestDueAt.Equal(failedAt.Add(10*time.Minute)) {
+	if deferred.ReviewRequestClaimedAt != nil || deferred.ReviewRequestDueAt == nil || deferred.ReviewRequestRetryAt == nil || !deferred.ReviewRequestRetryAt.Equal(failedAt.Add(10*time.Minute)) {
 		t.Fatalf("rate-limited request was not deferred: %#v", deferred)
+	}
+	if _, usable := lnb.sendPendingReviewRequests(-42, storage.GetChatData(-42), failedAt.Add(time.Minute), false, lnb.logger); !usable {
+		t.Fatal("immediate flush invalidated the snapshot")
+	}
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("immediate flush bypassed RetryAfter: %d", got)
 	}
 	lnb.ProcessDueReviews(failedAt.Add(9*time.Minute), lnb.logger)
 	if got := len(recorder.snapshot()); got != 0 {
@@ -405,6 +435,49 @@ func TestReviewProcessorDoesNotRewriteFutureSchema(t *testing.T) {
 	}
 	if got := len(recorder.snapshot()); got != 0 {
 		t.Fatalf("future schema triggered %d Telegram messages", got)
+	}
+}
+
+func TestFinalPersistenceFailureAbortsChatSnapshot(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := scheduledReviewData(now)
+	second := *data.FindBook("done0001")
+	second.ID = "done0002"
+	second.Title = "Вторая"
+	data.Books = append(data.Books, second)
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Dir(storage.GetChatDataFilePath(-42))
+	movedDir := dataDir + "-offline"
+	recorder.onFirstSend = func() {
+		if err := os.Rename(dataDir, movedDir); err != nil {
+			t.Errorf("move storage: %v", err)
+			return
+		}
+		if err := os.WriteFile(dataDir, []byte("blocked"), 0o600); err != nil {
+			t.Errorf("block storage: %v", err)
+		}
+	}
+	lnb.ProcessDueReviews(now.Add(reviewRequestDelay), lnb.logger)
+	if err := os.Remove(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(movedDir, dataDir); err != nil {
+		t.Fatal(err)
+	}
+	saved := storage.GetChatData(-42)
+	first := saved.FindBook("done0001")
+	secondSaved := saved.FindBook("done0002")
+	if first.ReviewRequestSentAt != nil || first.ReviewRequestClaimedAt == nil {
+		t.Fatalf("failed delivery poisoned persisted state: %#v", first)
+	}
+	if secondSaved.ReviewRequestSentAt != nil || secondSaved.ReviewRequestClaimedAt != nil {
+		t.Fatalf("processor continued with stale snapshot: %#v", secondSaved)
+	}
+	if recorder.deletions != 1 {
+		t.Fatalf("compensation deletions = %d, want 1", recorder.deletions)
 	}
 }
 

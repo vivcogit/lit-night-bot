@@ -7,6 +7,18 @@ import (
 	"path/filepath"
 )
 
+func SyncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("ошибка при открытии каталога для синхронизации: %w", err)
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("ошибка синхронизации каталога: %w", err)
+	}
+	return nil
+}
+
 func WriteJSONToFile[T any](filePath string, data T) error {
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -43,6 +55,9 @@ func WriteJSONToFile[T any](filePath string, data T) error {
 	}
 	if err := os.Rename(tempPath, filePath); err != nil {
 		return fmt.Errorf("ошибка атомарной замены файла: %w", err)
+	}
+	if err := SyncDirectory(dir); err != nil {
+		return err
 	}
 
 	return nil

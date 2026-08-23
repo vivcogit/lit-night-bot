@@ -39,6 +39,16 @@ func TestCallbackParametersRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTelegramHTTPTimeoutBoundsLongPolling(t *testing.T) {
+	client := newTelegramHTTPClient()
+	if client.Timeout <= time.Duration(telegramLongPollSeconds)*time.Second {
+		t.Fatalf("HTTP timeout %s must exceed long poll", client.Timeout)
+	}
+	if client.Timeout > 90*time.Second {
+		t.Fatalf("HTTP timeout %s leaves chat lock unbounded for too long", client.Timeout)
+	}
+}
+
 func TestReviewCallbackKeepsMenuMessageForEditing(t *testing.T) {
 	if shouldRemoveMenuMessage(menuText, CBBooksReview) {
 		t.Fatal("review callback must keep the menu message because it edits it in place")

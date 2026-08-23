@@ -14,6 +14,7 @@ import (
 
 const CurrentSchemaVersion = 3
 const MaxReviewTextUTF16Units = 3500
+const MaxUnfinishedReasonUTF16Units = 500
 
 type Book struct {
 	Name string `json:"name"`
@@ -46,6 +47,69 @@ const (
 	StatusUnfinished BookStatus = "unfinished"
 	StatusExcluded   BookStatus = "excluded"
 )
+
+type UnfinishedReason struct {
+	Code string `json:"code"`
+	Text string `json:"text,omitempty"`
+}
+
+const (
+	UnfinishedReasonNotEngaging  = "not_engaging"
+	UnfinishedReasonTooDifficult = "too_difficult"
+	UnfinishedReasonNotForClub   = "not_for_club"
+	UnfinishedReasonNoTime       = "no_time"
+	UnfinishedReasonOther        = "other"
+)
+
+func NewUnfinishedReason(code string, text string) (*UnfinishedReason, error) {
+	reason := &UnfinishedReason{Code: code, Text: strings.TrimSpace(text)}
+	if err := reason.Validate(); err != nil {
+		return nil, err
+	}
+	return reason, nil
+}
+
+func (reason *UnfinishedReason) Validate() error {
+	if reason == nil {
+		return nil
+	}
+	switch reason.Code {
+	case UnfinishedReasonNotEngaging, UnfinishedReasonTooDifficult, UnfinishedReasonNotForClub, UnfinishedReasonNoTime:
+		if strings.TrimSpace(reason.Text) != "" {
+			return errors.New("стандартная причина не должна содержать свой текст")
+		}
+	case UnfinishedReasonOther:
+		if strings.TrimSpace(reason.Text) == "" {
+			return errors.New("укажите причину")
+		}
+		if len(utf16.Encode([]rune(reason.Text))) > MaxUnfinishedReasonUTF16Units {
+			return fmt.Errorf("причина слишком длинная — сократите её до %d символов", MaxUnfinishedReasonUTF16Units)
+		}
+	default:
+		return errors.New("неизвестная причина")
+	}
+	return nil
+}
+
+func (reason *UnfinishedReason) DisplayText() string {
+	if reason == nil {
+		return ""
+	}
+	switch reason.Code {
+	case UnfinishedReasonNotEngaging:
+		return "Не увлекла"
+	case UnfinishedReasonTooDifficult:
+		return "Слишком тяжело читается"
+	case UnfinishedReasonNotForClub:
+		return "Не подошла для клуба"
+	case UnfinishedReasonNoTime:
+		return "Не успели и не хотим продолжать"
+	case UnfinishedReasonOther:
+		return strings.TrimSpace(reason.Text)
+	default:
+		return ""
+	}
+}
 
 type Rating struct {
 	UserID      int64     `json:"user_id"`
@@ -207,6 +271,7 @@ type ClubBook struct {
 	StartedAt              *time.Time         `json:"started_at,omitempty"`
 	CompletedAt            *time.Time         `json:"completed_at,omitempty"`
 	StoppedAt              *time.Time         `json:"stopped_at,omitempty"`
+	UnfinishedReason       *UnfinishedReason  `json:"unfinished_reason,omitempty"`
 	Deadline               *time.Time         `json:"deadline,omitempty"`
 	Ratings                []Rating           `json:"ratings"`
 	RatingsClosedAt        *time.Time         `json:"ratings_closed_at,omitempty"`
@@ -214,6 +279,7 @@ type ClubBook struct {
 	RatingsClosedByName    string             `json:"ratings_closed_by_name,omitempty"`
 	Reviews                []Review           `json:"reviews"`
 	ReviewRequestDueAt     *time.Time         `json:"review_request_due_at,omitempty"`
+	ReviewRequestRetryAt   *time.Time         `json:"review_request_retry_not_before,omitempty"`
 	ReviewRequestClaimedAt *time.Time         `json:"review_request_claimed_at,omitempty"`
 	ReviewRequestSentAt    *time.Time         `json:"review_request_sent_at,omitempty"`
 	ReviewRequestMsgID     int                `json:"review_request_message_id,omitempty"`
@@ -286,6 +352,7 @@ func (book *ClubBook) ScheduleReviewRequest(dueAt time.Time) bool {
 		return false
 	}
 	book.ReviewRequestDueAt = &dueAt
+	book.ReviewRequestRetryAt = nil
 	book.ReviewRequestClaimedAt = nil
 	return true
 }
@@ -295,17 +362,23 @@ func (book *ClubBook) CancelPendingReviewRequest() bool {
 		return false
 	}
 	book.ReviewRequestDueAt = nil
+	book.ReviewRequestRetryAt = nil
 	book.ReviewRequestClaimedAt = nil
 	book.ReviewReminders = nil
 	return true
 }
 
 func (book *ClubBook) ClaimReviewRequest(at time.Time, lease time.Duration) bool {
-	if book.ReviewRequestDueAt == nil || book.ReviewRequestSentAt != nil || !claimAvailable(book.ReviewRequestClaimedAt, at, lease) {
+	if book.ReviewRequestDueAt == nil || book.ReviewRequestSentAt != nil || (book.ReviewRequestRetryAt != nil && book.ReviewRequestRetryAt.After(at)) || !claimAvailable(book.ReviewRequestClaimedAt, at, lease) {
 		return false
 	}
 	book.ReviewRequestClaimedAt = &at
 	return true
+}
+
+func (book *ClubBook) DeferReviewRequest(retryAt time.Time) {
+	book.ReviewRequestClaimedAt = nil
+	book.ReviewRequestRetryAt = &retryAt
 }
 
 func (book *ClubBook) ReleaseReviewRequestClaim() {
@@ -315,6 +388,7 @@ func (book *ClubBook) ReleaseReviewRequestClaim() {
 func (book *ClubBook) MarkReviewRequestSent(at time.Time, messageID int) {
 	book.ReviewRequestSentAt = &at
 	book.ReviewRequestDueAt = nil
+	book.ReviewRequestRetryAt = nil
 	book.ReviewRequestClaimedAt = nil
 	book.ReviewRequestMsgID = messageID
 }
@@ -473,6 +547,10 @@ func (cd *ChatData) CurrentBook() *ClubBook {
 // FinishCurrentBook closes the active reading session and records either the
 // completion date or the date when the club stopped reading the book.
 func (cd *ChatData) FinishCurrentBook(expectedID string, status BookStatus, at time.Time) (*ClubBook, error) {
+	return cd.FinishCurrentBookWithReason(expectedID, status, nil, at)
+}
+
+func (cd *ChatData) FinishCurrentBookWithReason(expectedID string, status BookStatus, reason *UnfinishedReason, at time.Time) (*ClubBook, error) {
 	if status != StatusCompleted && status != StatusUnfinished {
 		return nil, errors.New("нужно выбрать: прочитали или не дочитали")
 	}
@@ -480,13 +558,20 @@ func (cd *ChatData) FinishCurrentBook(expectedID string, status BookStatus, at t
 	if book == nil || !strings.EqualFold(book.ID, expectedID) {
 		return nil, errors.New("текущая книга уже изменилась")
 	}
+	if status == StatusUnfinished {
+		if err := reason.Validate(); err != nil {
+			return nil, err
+		}
+	}
 	book.Status = status
 	book.CompletedAt = nil
 	book.StoppedAt = nil
+	book.UnfinishedReason = nil
 	if status == StatusCompleted {
 		book.CompletedAt = &at
 	} else {
 		book.StoppedAt = &at
+		book.UnfinishedReason = reason
 	}
 	book.Deadline = nil
 	return book, nil
@@ -744,6 +829,14 @@ func (cd *ChatData) ValidateV2() error {
 		if book.Status == StatusReading {
 			reading++
 		}
+		if book.UnfinishedReason != nil {
+			if book.Status != StatusUnfinished {
+				return fmt.Errorf("книга %q содержит причину без статуса «не дочитали»", book.ID)
+			}
+			if err := book.UnfinishedReason.Validate(); err != nil {
+				return fmt.Errorf("книга %q содержит некорректную причину: %w", book.ID, err)
+			}
+		}
 		ratingUsers := make(map[int64]struct{}, len(book.Ratings))
 		for _, rating := range book.Ratings {
 			if book.Status != StatusCompleted {
@@ -771,6 +864,9 @@ func (cd *ChatData) ValidateV2() error {
 		}
 		if book.ReviewRequestClaimedAt != nil && (book.ReviewRequestDueAt == nil || book.ReviewRequestSentAt != nil) {
 			return fmt.Errorf("книга %q содержит некорректный захват доставки запроса отзывов", book.ID)
+		}
+		if book.ReviewRequestRetryAt != nil && (book.ReviewRequestDueAt == nil || book.ReviewRequestSentAt != nil || book.Status != StatusCompleted || book.RatingsClosedAt == nil) {
+			return fmt.Errorf("книга %q содержит некорректный retry запроса отзывов", book.ID)
 		}
 		if book.ReviewRequestSentAt != nil && book.Status != StatusCompleted {
 			return fmt.Errorf("книга %q содержит запрос отзывов без завершённого чтения", book.ID)

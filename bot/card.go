@@ -51,6 +51,9 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 	if book.StoppedAt != nil {
 		text.WriteString("📅 Завершили чтение: " + book.StoppedAt.Format(DATE_LAYOUT) + "\n")
 	}
+	if book.UnfinishedReason != nil {
+		text.WriteString("💬 Причина: " + html.EscapeString(book.UnfinishedReason.DisplayText()) + "\n")
+	}
 	if book.Deadline != nil {
 		text.WriteString("🗓 Дедлайн: " + book.Deadline.Format(DATE_LAYOUT) + "\n")
 	}

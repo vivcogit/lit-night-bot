@@ -47,6 +47,7 @@ const (
 	CBCurrentComplete              CallbackAction = "c_complete"
 	CBCurrentMarkCompleted         CallbackAction = "c_mark_done"
 	CBCurrentMarkUnfinished        CallbackAction = "c_mark_unfinished"
+	CBCurrentUnfinishedReason      CallbackAction = "c_stop_reason"
 	CBCurrentAbort                 CallbackAction = "c_abort"
 	CBCurrentChooseBook            CallbackAction = "c_manual"
 
@@ -285,23 +286,27 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		lnb.handleCurrentRandom(update, logger)
 	case CBCurrentComplete:
 		lnb.handleCurrentComplete(update, logger)
-	case CBCurrentMarkCompleted, CBCurrentMarkUnfinished:
+	case CBCurrentMarkCompleted:
 		if len(cbParams) < 1 {
 			return
 		}
-		status := chatdata.StatusCompleted
-		if cbAction == CBCurrentMarkUnfinished {
-			status = chatdata.StatusUnfinished
-		}
-		lnb.finishCurrentBook(chatId, messageId, cbParams[0], status, logger)
+		lnb.finishCurrentBook(chatId, messageId, cbParams[0], chatdata.StatusCompleted, logger)
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+	case CBCurrentMarkUnfinished:
+		if len(cbParams) < 1 {
+			return
+		}
+		lnb.showUnfinishedReasonChoices(message, cbParams[0])
+		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+	case CBCurrentUnfinishedReason:
+		lnb.chooseUnfinishedReason(update, cbParams, logger)
 	case CBCurrentChangeDeadlineRequest:
 		lnb.handleCurrentDeadlineRequest(update, logger)
 	case CBCurrentToHistory:
 		if len(cbParams) < 1 {
 			return
 		}
-		lnb.moveCurrentBook(chatId, messageId, cbParams[0], true, logger)
+		lnb.showUnfinishedReasonChoices(message, cbParams[0])
 	case CBCurrentToWishlist:
 		if len(cbParams) < 1 {
 			return

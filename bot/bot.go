@@ -3,12 +3,20 @@ package bot
 import (
 	"fmt"
 	io "lit-night-bot/io"
+	"net/http"
 	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 )
+
+const telegramLongPollSeconds = 60
+const telegramHTTPTimeout = 75 * time.Second
+
+func newTelegramHTTPClient() *http.Client {
+	return &http.Client{Timeout: telegramHTTPTimeout}
+}
 
 type LitNightBot struct {
 	bot               *tgbotapi.BotAPI
@@ -48,7 +56,7 @@ func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isD
 	if location == nil {
 		return nil, fmt.Errorf("application location is required")
 	}
-	bot, err := tgbotapi.NewBotAPI(token)
+	bot, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, newTelegramHTTPClient())
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +106,7 @@ func (lnb *LitNightBot) Start() {
 	lnb.InitMenu()
 
 	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = 60
+	updateConfig.Timeout = telegramLongPollSeconds
 
 	updates := lnb.bot.GetUpdatesChan(updateConfig)
 

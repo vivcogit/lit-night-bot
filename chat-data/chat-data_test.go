@@ -423,3 +423,54 @@ func TestCurrentSchemaRejectsLegacyMigrationSentinel(t *testing.T) {
 		t.Fatal("current schema accepted migration_complete=true")
 	}
 }
+
+func TestReviewRetryNotBeforeCannotBeBypassed(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	due := now.Add(-time.Minute)
+	retryAt := now.Add(10 * time.Minute)
+	closedAt := now.Add(-time.Hour)
+	book := ClubBook{Status: StatusCompleted, RatingsClosedAt: &closedAt, RatingsClosedBy: 1, ReviewRequestDueAt: &due}
+	book.DeferReviewRequest(retryAt)
+	if book.ClaimReviewRequest(now, 15*time.Minute) {
+		t.Fatal("retry-not-before was bypassed")
+	}
+	if !book.ClaimReviewRequest(retryAt, 15*time.Minute) {
+		t.Fatal("request was not claimable at retry-not-before")
+	}
+	book.MarkReviewRequestSent(retryAt, 42)
+	if book.ReviewRequestRetryAt != nil {
+		t.Fatal("sent transition kept retry-not-before")
+	}
+}
+
+func TestFinishUnfinishedBookStoresStructuredReason(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := NewChatData()
+	data.Books = []ClubBook{{ID: "book0001", Title: "Книга", Status: StatusReading}}
+	reason, err := NewUnfinishedReason(UnfinishedReasonOther, "Не совпало с настроением клуба")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := data.FinishCurrentBookWithReason("book0001", StatusUnfinished, reason, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if book.UnfinishedReason == nil || book.UnfinishedReason.DisplayText() != reason.Text || book.StoppedAt == nil {
+		t.Fatalf("unfinished reason was not stored: %#v", book)
+	}
+	if err := data.ValidateV2(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInvalidUnfinishedReasonDoesNotMutateCurrentBook(t *testing.T) {
+	data := NewChatData()
+	data.Books = []ClubBook{{ID: "book0001", Title: "Книга", Status: StatusReading}}
+	invalid := &UnfinishedReason{Code: UnfinishedReasonOther, Text: " "}
+	if _, err := data.FinishCurrentBookWithReason("book0001", StatusUnfinished, invalid, time.Now()); err == nil {
+		t.Fatal("invalid reason was accepted")
+	}
+	if data.CurrentBook() == nil || data.CurrentBook().UnfinishedReason != nil {
+		t.Fatalf("invalid reason mutated current book: %#v", data.Books[0])
+	}
+}
