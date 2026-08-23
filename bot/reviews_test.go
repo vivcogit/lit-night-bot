@@ -35,6 +35,12 @@ func TestReviewRequestContainsPromptsAndActions(t *testing.T) {
 	}
 }
 
+func TestReviewReminderUsesTemporaryTestDelay(t *testing.T) {
+	if reviewReminderDelay != 3*time.Minute {
+		t.Fatalf("review reminder delay = %s, want temporary 3m", reviewReminderDelay)
+	}
+}
+
 func TestReviewReplyPromptIsSelectiveAndBoundToUser(t *testing.T) {
 	user := &tgbotapi.User{ID: 77, FirstName: "Анна"}
 	config := reviewReplyConfig(-100, reviewTestBook(), user)

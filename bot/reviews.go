@@ -16,7 +16,9 @@ import (
 )
 
 const reviewRequestDelay = 15 * time.Minute
-const reviewReminderDelay = 24 * time.Hour
+
+// Temporary test interval. Restore to 24 hours after reminder verification.
+const reviewReminderDelay = 3 * time.Minute
 const reviewDeliveryClaimLease = 15 * time.Minute
 const reviewDeliveryRetryBackoff = 5 * time.Minute
 const reviewSourceCard = "card"
