@@ -78,7 +78,7 @@ func renderRatingPanelForChat(book *chatdata.ClubBook, justCompleted bool, priva
 	}
 	var text strings.Builder
 	if justCompleted {
-		text.WriteString("✅ <b>«" + html.EscapeString(book.DisplayName()) + "» прочитана!</b>\n\n")
+		text.WriteString("✅ <b>«" + html.EscapeString(book.DisplayName()) + "» обсуждена!</b>\n\n")
 	} else {
 		text.WriteString("⭐ <b>Оценка книги</b>\n")
 		text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
@@ -187,6 +187,35 @@ func ratingResultButtons(book *chatdata.ClubBook) [][]tgbotapi.InlineKeyboardBut
 			tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
 		),
 	}
+}
+
+func ratingResultButtonsWithNextBook(book *chatdata.ClubBook, data *chatdata.ChatData) [][]tgbotapi.InlineKeyboardButton {
+	buttons := make([][]tgbotapi.InlineKeyboardButton, 0, 6)
+	if data != nil && data.CurrentBook() == nil {
+		if len(data.BooksWithStatus(chatdata.StatusWishlist)) == 0 {
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("➕ Добавить в вишлист", GetCallbackParamStr(CBWishlistAddBookRequest)),
+			))
+		} else {
+			buttons = append(buttons,
+				tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🎲 Случайная книга", GetCallbackParamStr(CBCurrentRandom))),
+				tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📘 Выбрать книгу", GetCallbackParamStr(CBWishlistChoose))),
+			)
+		}
+	}
+	buttons = append(buttons, ratingResultButtons(book)...)
+	return buttons
+}
+
+func renderRatingResultWithNextBook(book *chatdata.ClubBook, data *chatdata.ChatData) string {
+	text := renderRatingResult(book)
+	if data == nil || data.CurrentBook() != nil {
+		return text
+	}
+	if len(data.BooksWithStatus(chatdata.StatusWishlist)) == 0 {
+		return text + "\n\n📚 Вишлист пуст. Добавьте книги, когда будете готовы, и вернитесь к выбору позже."
+	}
+	return text + "\n\nВыберите следующую книгу случайно или из вишлиста."
 }
 
 func renderRatingsList(book *chatdata.ClubBook, page int) (string, int, int) {
@@ -444,10 +473,12 @@ func (lnb *LitNightBot) confirmRatingClose(update *tgbotapi.Update, params []str
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Книга не найдена"))
 		return
 	}
-	if err := book.CloseRatings(user.ID, telegramDisplayName(user), time.Now()); err != nil {
+	now := time.Now()
+	if err := book.CloseRatings(user.ID, telegramDisplayName(user), now); err != nil {
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, err.Error()))
 		return
 	}
+	book.ScheduleReviewRequest(now.Add(reviewRequestDelay))
 	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
 		logger.WithError(err).Error("Failed to close ratings")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось сохранить итог"))
@@ -456,7 +487,7 @@ func (lnb *LitNightBot) confirmRatingClose(update *tgbotapi.Update, params []str
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Итог готов"))
 	lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
 	if sourceMessageID > 0 {
-		lnb.editHTMLMessage(chatID, sourceMessageID, renderRatingResult(book), ratingResultButtons(book))
+		lnb.editHTMLMessage(chatID, sourceMessageID, renderRatingResultWithNextBook(book, data), ratingResultButtonsWithNextBook(book, data))
 	}
 }
 
@@ -489,6 +520,7 @@ func (lnb *LitNightBot) reopenRatings(update *tgbotapi.Update, bookID string, lo
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Сбор оценок уже открыт"))
 		return
 	}
+	book.CancelPendingReviewRequest()
 	if err := lnb.iocd.SaveChatData(message.Chat.ID, data); err != nil {
 		logger.WithError(err).Error("Failed to reopen ratings")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось возобновить сбор оценок"))

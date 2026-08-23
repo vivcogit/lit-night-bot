@@ -152,6 +152,13 @@ type Review struct {
 	UpdatedAt   time.Time `json:"updated_at,omitempty"`
 }
 
+type ReviewReminder struct {
+	UserID      int64     `json:"user_id"`
+	DisplayName string    `json:"display_name"`
+	Username    string    `json:"username,omitempty"`
+	DueAt       time.Time `json:"due_at"`
+}
+
 type DiscussionSummary struct {
 	Text       string    `json:"text"`
 	EditorID   int64     `json:"editor_user_id"`
@@ -184,7 +191,126 @@ type ClubBook struct {
 	RatingsClosedBy     int64              `json:"ratings_closed_by,omitempty"`
 	RatingsClosedByName string             `json:"ratings_closed_by_name,omitempty"`
 	Reviews             []Review           `json:"reviews"`
+	ReviewRequestDueAt  *time.Time         `json:"review_request_due_at,omitempty"`
+	ReviewRequestSentAt *time.Time         `json:"review_request_sent_at,omitempty"`
+	ReviewRequestMsgID  int                `json:"review_request_message_id,omitempty"`
+	ReviewReminders     []ReviewReminder   `json:"review_reminders,omitempty"`
 	DiscussionSummary   *DiscussionSummary `json:"discussion_summary,omitempty"`
+}
+
+func (book *ClubBook) ReviewByUser(userID int64) *Review {
+	for index := range book.Reviews {
+		if book.Reviews[index].UserID == userID {
+			return &book.Reviews[index]
+		}
+	}
+	return nil
+}
+
+func (book *ClubBook) SetReview(userID int64, displayName string, username string, text string, at time.Time) (bool, error) {
+	if book.Status != StatusCompleted {
+		return false, errors.New("оставить отзыв можно только на обсуждённую книгу")
+	}
+	if userID <= 0 {
+		return false, errors.New("не удалось определить участника")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false, errors.New("отзыв не может быть пустым")
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = "Участник"
+	}
+	username = strings.TrimPrefix(strings.TrimSpace(username), "@")
+	if review := book.ReviewByUser(userID); review != nil {
+		review.DisplayName = displayName
+		review.Username = username
+		review.Text = text
+		review.UpdatedAt = at
+		book.CancelReviewReminder(userID)
+		return true, nil
+	}
+	book.Reviews = append(book.Reviews, Review{
+		ID:          getUUID(),
+		UserID:      userID,
+		DisplayName: displayName,
+		Username:    username,
+		Text:        text,
+		CreatedAt:   at,
+		UpdatedAt:   at,
+	})
+	book.CancelReviewReminder(userID)
+	return false, nil
+}
+
+func (book *ClubBook) DeleteReview(userID int64) bool {
+	for index := range book.Reviews {
+		if book.Reviews[index].UserID != userID {
+			continue
+		}
+		book.Reviews = append(book.Reviews[:index], book.Reviews[index+1:]...)
+		return true
+	}
+	return false
+}
+
+func (book *ClubBook) ScheduleReviewRequest(dueAt time.Time) bool {
+	if book.Status != StatusCompleted || book.RatingsClosedAt == nil || book.ReviewRequestSentAt != nil {
+		return false
+	}
+	book.ReviewRequestDueAt = &dueAt
+	return true
+}
+
+func (book *ClubBook) CancelPendingReviewRequest() bool {
+	if book.ReviewRequestSentAt != nil || book.ReviewRequestDueAt == nil {
+		return false
+	}
+	book.ReviewRequestDueAt = nil
+	return true
+}
+
+func (book *ClubBook) MarkReviewRequestSent(at time.Time, messageID int) {
+	book.ReviewRequestSentAt = &at
+	book.ReviewRequestDueAt = nil
+	book.ReviewRequestMsgID = messageID
+}
+
+func (book *ClubBook) SetReviewReminder(userID int64, displayName string, username string, dueAt time.Time) error {
+	if book.Status != StatusCompleted || book.ReviewRequestSentAt == nil {
+		return errors.New("сбор отзывов ещё не начался")
+	}
+	if userID <= 0 {
+		return errors.New("не удалось определить участника")
+	}
+	if book.ReviewByUser(userID) != nil {
+		return errors.New("ваш отзыв уже сохранён")
+	}
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = "Участник"
+	}
+	username = strings.TrimPrefix(strings.TrimSpace(username), "@")
+	for index := range book.ReviewReminders {
+		if book.ReviewReminders[index].UserID == userID {
+			book.ReviewReminders[index] = ReviewReminder{UserID: userID, DisplayName: displayName, Username: username, DueAt: dueAt}
+			return nil
+		}
+	}
+	book.ReviewReminders = append(book.ReviewReminders, ReviewReminder{UserID: userID, DisplayName: displayName, Username: username, DueAt: dueAt})
+	return nil
+}
+
+func (book *ClubBook) CancelReviewReminder(userID int64) bool {
+	for index := range book.ReviewReminders {
+		if book.ReviewReminders[index].UserID != userID {
+			continue
+		}
+		book.ReviewReminders = append(book.ReviewReminders[:index], book.ReviewReminders[index+1:]...)
+		return true
+	}
+	return false
 }
 
 func (book ClubBook) DisplayName() string {
@@ -541,6 +667,35 @@ func (cd *ChatData) ValidateV2() error {
 		}
 		if book.RatingsClosedAt == nil && (book.RatingsClosedBy != 0 || book.RatingsClosedByName != "") {
 			return fmt.Errorf("книга %q содержит данные завершения без даты", book.ID)
+		}
+		if book.ReviewRequestDueAt != nil && (book.Status != StatusCompleted || book.RatingsClosedAt == nil || book.ReviewRequestSentAt != nil) {
+			return fmt.Errorf("книга %q содержит некорректное ожидание запроса отзывов", book.ID)
+		}
+		if book.ReviewRequestSentAt != nil && book.Status != StatusCompleted {
+			return fmt.Errorf("книга %q содержит запрос отзывов без завершённого чтения", book.ID)
+		}
+		reviewUsers := make(map[int64]struct{}, len(book.Reviews))
+		for _, review := range book.Reviews {
+			if book.Status != StatusCompleted || review.UserID <= 0 || strings.TrimSpace(review.Text) == "" {
+				return fmt.Errorf("книга %q содержит некорректный отзыв", book.ID)
+			}
+			if _, exists := reviewUsers[review.UserID]; exists {
+				return fmt.Errorf("книга %q содержит повторный отзыв участника %d", book.ID, review.UserID)
+			}
+			reviewUsers[review.UserID] = struct{}{}
+		}
+		reminderUsers := make(map[int64]struct{}, len(book.ReviewReminders))
+		for _, reminder := range book.ReviewReminders {
+			if book.ReviewRequestSentAt == nil || reminder.UserID <= 0 || reminder.DueAt.IsZero() {
+				return fmt.Errorf("книга %q содержит некорректное напоминание об отзыве", book.ID)
+			}
+			if _, exists := reviewUsers[reminder.UserID]; exists {
+				return fmt.Errorf("книга %q содержит напоминание участнику с отзывом %d", book.ID, reminder.UserID)
+			}
+			if _, exists := reminderUsers[reminder.UserID]; exists {
+				return fmt.Errorf("книга %q содержит повторное напоминание участнику %d", book.ID, reminder.UserID)
+			}
+			reminderUsers[reminder.UserID] = struct{}{}
 		}
 	}
 	if reading > 1 {

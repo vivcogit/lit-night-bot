@@ -210,6 +210,57 @@ func TestBookRatingCloseAndReopen(t *testing.T) {
 	}
 }
 
+func TestBookReviewLifecycleAndPerUserReminder(t *testing.T) {
+	now := time.Date(2026, time.August, 23, 18, 0, 0, 0, time.UTC)
+	closedAt := now
+	book := ClubBook{ID: "book1", Title: "Book", Status: StatusCompleted, RatingsClosedAt: &closedAt, RatingsClosedBy: 1}
+	dueAt := now.Add(15 * time.Minute)
+	if !book.ScheduleReviewRequest(dueAt) || book.ReviewRequestDueAt == nil || !book.ReviewRequestDueAt.Equal(dueAt) {
+		t.Fatalf("review request was not scheduled: %#v", book)
+	}
+	book.MarkReviewRequestSent(dueAt, 42)
+	if book.ReviewRequestDueAt != nil || book.ReviewRequestSentAt == nil || book.ReviewRequestMsgID != 42 {
+		t.Fatalf("review request was not marked sent: %#v", book)
+	}
+	reminderAt := dueAt.Add(24 * time.Hour)
+	if err := book.SetReviewReminder(2, " Борис ", "boris", reminderAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := book.SetReviewReminder(2, "Борис Новый", "new_boris", reminderAt.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if len(book.ReviewReminders) != 1 || book.ReviewReminders[0].DisplayName != "Борис Новый" {
+		t.Fatalf("reminder was duplicated instead of updated: %#v", book.ReviewReminders)
+	}
+	if err := book.SetReviewReminder(3, "Вера", "vera", reminderAt); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := book.SetReview(2, "Борис", "boris", " Первая мысль. ", reminderAt)
+	if err != nil || updated || len(book.Reviews) != 1 || len(book.ReviewReminders) != 1 || book.ReviewReminders[0].UserID != 3 {
+		t.Fatalf("unexpected first review: updated=%v err=%v book=%#v", updated, err, book)
+	}
+	updated, err = book.SetReview(2, "Борис", "boris", "Новый текст", reminderAt.Add(time.Hour))
+	if err != nil || !updated || book.Reviews[0].Text != "Новый текст" {
+		t.Fatalf("review was not updated: updated=%v err=%v review=%#v", updated, err, book.Reviews[0])
+	}
+	if !book.DeleteReview(2) || book.DeleteReview(2) {
+		t.Fatal("review deletion must succeed exactly once")
+	}
+}
+
+func TestPendingReviewRequestCanBeCancelledBeforeSending(t *testing.T) {
+	now := time.Now()
+	book := ClubBook{Status: StatusCompleted, RatingsClosedAt: &now}
+	if !book.ScheduleReviewRequest(now.Add(15*time.Minute)) || !book.CancelPendingReviewRequest() || book.ReviewRequestDueAt != nil {
+		t.Fatalf("pending request was not cancelled: %#v", book)
+	}
+	book.ScheduleReviewRequest(now.Add(15 * time.Minute))
+	book.MarkReviewRequestSent(now, 1)
+	if book.CancelPendingReviewRequest() {
+		t.Fatal("sent request must not be cancelled")
+	}
+}
+
 func TestParseStructuredBookCases(t *testing.T) {
 	tests := []struct {
 		input       string

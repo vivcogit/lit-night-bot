@@ -70,6 +70,9 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 	if !private && book.RatingsClosedAt != nil {
 		text.WriteString("🏁 Сбор оценок завершён\n")
 	}
+	if book.Status == chatdata.StatusCompleted {
+		text.WriteString(fmt.Sprintf("💬 Отзывов: %d\n", len(book.Reviews)))
+	}
 	if book.NeedsReview {
 		text.WriteString("\n⚠️ <b>Карточка создана миграцией и требует проверки.</b>\n")
 		if book.LegacyName != "" {
@@ -101,6 +104,9 @@ func bookCardButtonsForChat(book *chatdata.ClubBook, private bool, userID int64)
 			ratingRow = append(ratingRow, tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("👥 Оценки (%d)", len(book.Ratings)), GetCallbackParamStr(CBRatingList, book.ID, "0")))
 		}
 		buttons = append(buttons, ratingRow)
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("💬 Отзывы (%d)", len(book.Reviews)), GetCallbackParamStr(CBReviewList, book.ID)),
+		))
 	}
 	buttons = append(buttons,
 		tgbotapi.NewInlineKeyboardRow(

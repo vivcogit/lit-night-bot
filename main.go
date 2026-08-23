@@ -47,6 +47,7 @@ func main() {
 	cronTasks := []tasks.Task{
 		*tasks.Remind("0 7 * * *", tasks.OneWeekReminderJokes, 7, config.location),
 		*tasks.Remind("0 7 * * *", tasks.OneDayReminderJokes, 1, config.location),
+		*tasks.Reviews("* * * * *"),
 	}
 
 	lnb.Start()

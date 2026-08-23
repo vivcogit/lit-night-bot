@@ -24,6 +24,10 @@ func (lnb *LitNightBot) handleReply(update *tgbotapi.Update, logger *logrus.Entr
 		return
 	}
 
+	if lnb.handleReviewReply(update.Message, origMsg.Text, logger) {
+		return
+	}
+
 	if lnb.handleBookFieldReply(update.Message, origMsg.Text, logger) {
 		return
 	}

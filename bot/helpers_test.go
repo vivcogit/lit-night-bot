@@ -166,14 +166,14 @@ func TestRenderDetailedBookCardAndButtons(t *testing.T) {
 		}
 	}
 	buttons := bookCardButtons(book)
-	if len(buttons) != 5 {
-		t.Fatalf("button rows = %d, want 5", len(buttons))
+	if len(buttons) != 6 {
+		t.Fatalf("button rows = %d, want 6", len(buttons))
 	}
 	book.Authors = nil
 	book.NeedsReview = false
 	buttons = bookCardButtons(book)
-	if len(buttons) != 3 {
-		t.Fatalf("minimal button rows = %d, want 3", len(buttons))
+	if len(buttons) != 4 {
+		t.Fatalf("minimal button rows = %d, want 4", len(buttons))
 	}
 }
 
@@ -238,7 +238,7 @@ func TestCurrentBookSelectionChecks(t *testing.T) {
 
 func TestCurrentCompletionStatusButtons(t *testing.T) {
 	buttons := currentCompletionButtons("book0001")
-	if len(buttons) != 3 || buttons[0][0].Text != "✅ Прочитали" || buttons[1][0].Text != "🚫 Не дочитали / бросили" {
+	if len(buttons) != 3 || buttons[0][0].Text != "✅ Обсудили" || buttons[1][0].Text != "🚫 Не дочитали / бросили" {
 		t.Fatalf("unexpected completion buttons: %#v", buttons)
 	}
 	for index, want := range []CallbackAction{CBCurrentMarkCompleted, CBCurrentMarkUnfinished} {

@@ -91,7 +91,7 @@ func (lnb *LitNightBot) handleCurrentComplete(update *tgbotapi.Update, logger *l
 
 func currentCompletionButtons(bookID string) [][]tgbotapi.InlineKeyboardButton {
 	return [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✅ Прочитали", GetCallbackParamStr(CBCurrentMarkCompleted, bookID))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✅ Обсудили", GetCallbackParamStr(CBCurrentMarkCompleted, bookID))),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🚫 Не дочитали / бросили", GetCallbackParamStr(CBCurrentMarkUnfinished, bookID))),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBCancel))),
 	}
@@ -186,6 +186,7 @@ func (lnb *LitNightBot) setCurrentBook(chatID int64, data *chatdata.ChatData, id
 		return false
 	}
 	lnb.SendPlainMessage(chatID, fmt.Sprintf("📖 Текущая книга: «%s»\nАвтоматический дедлайн: %s", book.DisplayName(), deadline.Format(DATE_LAYOUT)))
+	lnb.sendPendingReviewRequests(chatID, data, time.Now(), false, logger)
 	return true
 }
 

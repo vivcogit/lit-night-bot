@@ -34,6 +34,12 @@ const (
 	CBRatingCloseConfirm  CallbackAction = "rating_finish_ok"
 	CBRatingCloseCancel   CallbackAction = "rating_finish_no"
 	CBRatingReopen        CallbackAction = "rating_reopen"
+	CBReviewWrite         CallbackAction = "review_write"
+	CBReviewRemind        CallbackAction = "review_remind"
+	CBReviewSkip          CallbackAction = "review_skip"
+	CBReviewDelete        CallbackAction = "review_delete"
+	CBReviewList          CallbackAction = "review_list"
+	CBReviewBackToBook    CallbackAction = "review_book"
 
 	CBCurrentShow                  CallbackAction = "c_show"
 	CBCurrentChangeDeadlineRequest CallbackAction = "c_deadline"
@@ -221,6 +227,50 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 			return
 		}
 		lnb.reopenRatings(update, cbParams[0], logger)
+	case CBReviewWrite:
+		if len(cbParams) < 1 {
+			return
+		}
+		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+			return
+		}
+		lnb.requestReview(update, cbParams[0], logger)
+	case CBReviewRemind:
+		if len(cbParams) < 1 {
+			return
+		}
+		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+			return
+		}
+		lnb.scheduleReviewReminder(update, cbParams[0], logger)
+	case CBReviewSkip:
+		if len(cbParams) < 1 {
+			return
+		}
+		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+			return
+		}
+		lnb.skipReview(update, cbParams[0], logger)
+	case CBReviewDelete:
+		if len(cbParams) < 1 {
+			return
+		}
+		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+			return
+		}
+		lnb.deleteReview(update, cbParams[0], logger)
+	case CBReviewList:
+		if len(cbParams) < 1 {
+			return
+		}
+		lnb.showReviews(message, cbParams[0])
+		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+	case CBReviewBackToBook:
+		if len(cbParams) < 1 {
+			return
+		}
+		lnb.showBookCardInPlace(message, cbParams[0])
+		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
 	case CBCurrentShow:
 		lnb.handleCurrent(update, logger)
 	case CBCurrentRandom:
