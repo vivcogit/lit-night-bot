@@ -162,6 +162,25 @@ type ReviewReminder struct {
 	DeliveryClaimedAt *time.Time `json:"delivery_claimed_at,omitempty"`
 }
 
+func claimAvailable(claimedAt *time.Time, at time.Time, lease time.Duration) bool {
+	return claimedAt == nil || !claimedAt.Add(lease).After(at)
+}
+
+func (reminder *ReviewReminder) ClaimDelivery(at time.Time, lease time.Duration) bool {
+	if reminder == nil || reminder.DueAt.After(at) || !claimAvailable(reminder.DeliveryClaimedAt, at, lease) {
+		return false
+	}
+	claimedAt := at
+	reminder.DeliveryClaimedAt = &claimedAt
+	return true
+}
+
+func (reminder *ReviewReminder) ReleaseDeliveryClaim() {
+	if reminder != nil {
+		reminder.DeliveryClaimedAt = nil
+	}
+}
+
 type DiscussionSummary struct {
 	Text       string    `json:"text"`
 	EditorID   int64     `json:"editor_user_id"`
@@ -277,11 +296,12 @@ func (book *ClubBook) CancelPendingReviewRequest() bool {
 	}
 	book.ReviewRequestDueAt = nil
 	book.ReviewRequestClaimedAt = nil
+	book.ReviewReminders = nil
 	return true
 }
 
-func (book *ClubBook) ClaimReviewRequest(at time.Time) bool {
-	if book.ReviewRequestDueAt == nil || book.ReviewRequestSentAt != nil || book.ReviewRequestClaimedAt != nil {
+func (book *ClubBook) ClaimReviewRequest(at time.Time, lease time.Duration) bool {
+	if book.ReviewRequestDueAt == nil || book.ReviewRequestSentAt != nil || !claimAvailable(book.ReviewRequestClaimedAt, at, lease) {
 		return false
 	}
 	book.ReviewRequestClaimedAt = &at
@@ -299,8 +319,12 @@ func (book *ClubBook) MarkReviewRequestSent(at time.Time, messageID int) {
 	book.ReviewRequestMsgID = messageID
 }
 
+func (book *ClubBook) ReviewCollectionOpen() bool {
+	return book != nil && book.Status == StatusCompleted && (book.ReviewRequestDueAt != nil || book.ReviewRequestClaimedAt != nil || book.ReviewRequestSentAt != nil)
+}
+
 func (book *ClubBook) SetReviewReminder(userID int64, displayName string, username string, dueAt time.Time) error {
-	if book.Status != StatusCompleted || (book.ReviewRequestSentAt == nil && book.ReviewRequestClaimedAt == nil) {
+	if !book.ReviewCollectionOpen() {
 		return errors.New("сбор отзывов ещё не начался")
 	}
 	if userID <= 0 {
@@ -347,7 +371,9 @@ func (book ClubBook) GetBook() Book {
 }
 
 type ChatData struct {
-	SchemaVersion     int           `json:"schema_version,omitempty"`
+	SchemaVersion int `json:"schema_version,omitempty"`
+	// Deprecated: in schema v3 this field is always false. It is kept only as
+	// a poison pill so a rolled-back v2 binary refuses to rewrite v3 data.
 	MigrationComplete bool          `json:"migration_complete,omitempty"`
 	Chat              *ChatMetadata `json:"chat,omitempty"`
 	Books             []ClubBook    `json:"books,omitempty"`
@@ -398,6 +424,18 @@ func (cd *ChatData) IsLegacy() bool {
 
 func (cd *ChatData) IsFutureSchema() bool {
 	return cd != nil && cd.SchemaVersion > CurrentSchemaVersion
+}
+
+func (cd *ChatData) HasBooksNeedingReview() bool {
+	if cd == nil {
+		return false
+	}
+	for _, book := range cd.Books {
+		if book.NeedsReview {
+			return true
+		}
+	}
+	return false
 }
 
 func (cd *ChatData) BooksWithStatus(statuses ...BookStatus) []ClubBook {
@@ -679,6 +717,9 @@ func (cd *ChatData) ValidateV2() error {
 	if cd == nil || cd.SchemaVersion != CurrentSchemaVersion {
 		return fmt.Errorf("неверная версия схемы")
 	}
+	if cd.MigrationComplete {
+		return fmt.Errorf("migration_complete должен оставаться false в схеме v%d", CurrentSchemaVersion)
+	}
 	seen := make(map[string]struct{}, len(cd.Books))
 	reading := 0
 	validStatuses := map[BookStatus]struct{}{
@@ -746,7 +787,7 @@ func (cd *ChatData) ValidateV2() error {
 		}
 		reminderUsers := make(map[int64]struct{}, len(book.ReviewReminders))
 		for _, reminder := range book.ReviewReminders {
-			if book.ReviewRequestSentAt == nil || reminder.UserID <= 0 || reminder.DueAt.IsZero() {
+			if !book.ReviewCollectionOpen() || reminder.UserID <= 0 || reminder.DueAt.IsZero() {
 				return fmt.Errorf("книга %q содержит некорректное напоминание об отзыве", book.ID)
 			}
 			if _, exists := reviewUsers[reminder.UserID]; exists {

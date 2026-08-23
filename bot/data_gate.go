@@ -12,6 +12,7 @@ import (
 
 const serverMigrationRequiredText = "🔒 Данные бота ещё не обновлены.\n\nАдминистратору сервера нужно выполнить команду migrate. До этого функции бота недоступны."
 const newerSchemaRequiredText = "🔒 Данные созданы более новой версией бота.\n\nОбновите приложение перед продолжением."
+const cardReviewRequiredText = "⚠️ Сначала проверьте карточки, созданные при миграции. Откройте /menu → «Проверить карточки»."
 const dataStorageErrorText = "⚠️ Не удалось сохранить данные. Изменение не применено; попробуйте ещё раз позже."
 const dataReadErrorText = "⚠️ Данные чата временно недоступны. Файл не был изменён; обратитесь к администратору."
 
@@ -63,6 +64,42 @@ func updateChatMetadata(data *chatdata.ChatData, chat *tgbotapi.Chat) bool {
 	return true
 }
 
+func isCardReviewUpdate(data *chatdata.ChatData, update *tgbotapi.Update) bool {
+	if data == nil || update == nil {
+		return false
+	}
+	if update.Message != nil {
+		if update.Message.IsCommand() {
+			command := update.Message.Command()
+			return command == "menu" || command == "start"
+		}
+		if update.Message.ReplyToMessage != nil {
+			_, bookID, _, ok := parseBookFieldPrompt(update.Message.ReplyToMessage.Text)
+			book := data.FindBook(bookID)
+			return ok && book != nil && book.NeedsReview
+		}
+	}
+	if update.CallbackQuery == nil {
+		return false
+	}
+	action, params, err := GetCallbackParam(update.CallbackQuery.Data)
+	if err != nil {
+		return false
+	}
+	switch action {
+	case CBBooksReview, CBCancel:
+		return true
+	case CBBookShow, CBBookEditTitle, CBBookEditAuthors, CBBookSwap, CBBookApprove:
+		if len(params) == 0 {
+			return false
+		}
+		book := data.FindBook(params[0])
+		return book != nil && book.NeedsReview
+	default:
+		return false
+	}
+}
+
 func (lnb *LitNightBot) allowUpdate(update *tgbotapi.Update, logger *logrus.Entry) bool {
 	chatID, ok := chatIDFromUpdate(update, logger)
 	if !ok {
@@ -87,6 +124,18 @@ func (lnb *LitNightBot) allowUpdate(update *tgbotapi.Update, logger *logrus.Entr
 		return false
 	}
 	if !data.IsLegacy() {
+		if data.MigrationComplete {
+			logger.Error("Current schema contains an invalid legacy migration sentinel")
+			lnb.SendPlainMessage(chatID, dataReadErrorText)
+			return false
+		}
+		if data.HasBooksNeedingReview() && !isCardReviewUpdate(data, update) {
+			if update.CallbackQuery != nil {
+				lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Сначала проверьте карточки"))
+			}
+			lnb.SendPlainMessage(chatID, cardReviewRequiredText)
+			return false
+		}
 		if updateChatMetadata(data, update.FromChat()) {
 			if !lnb.saveChatData(chatID, data, logger) {
 				return false

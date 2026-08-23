@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	io "io"
 	chatdata "lit-night-bot/chat-data"
 	chatio "lit-night-bot/io"
@@ -95,5 +97,43 @@ func TestServerMigrationDryRunAndApply(t *testing.T) {
 	}
 	if err := migrateStoredChats(storage, true, 0, now); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServerMigrationRefusesConcurrentWriter(t *testing.T) {
+	storage, dir := migrationTestStorage(t)
+	before, err := os.ReadFile(filepath.Join(dir, "42"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataLock, err := storage.TryAcquireDataDirectoryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = migrateStoredChats(storage, true, 0, time.Now())
+	if !errors.Is(err, chatio.ErrDataDirectoryLocked) {
+		t.Fatalf("migration lock error = %v, want ErrDataDirectoryLocked", err)
+	}
+	after, readErr := os.ReadFile(filepath.Join(dir, "42"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("blocked migration changed the source file")
+	}
+	if backups, _ := filepath.Glob(filepath.Join(dir, "_migration", "backups", "*")); len(backups) != 0 {
+		t.Fatalf("blocked migration created backups: %#v", backups)
+	}
+	if err := dataLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateStoredChats(storage, true, 0, time.Now()); err != nil {
+		t.Fatalf("migration did not resume after lock release: %v", err)
+	}
+}
+
+func TestMigrationCommandRequiresStoppedBotConfirmation(t *testing.T) {
+	if code := runMigrationCommand([]string{"--apply"}); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
 	}
 }

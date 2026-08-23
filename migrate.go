@@ -19,8 +19,13 @@ func runMigrationCommand(args []string) int {
 	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	apply := flags.Bool("apply", false, "write migrated data; without this flag only a dry-run is performed")
 	chatID := flags.Int64("chat-id", 0, "migrate only one chat ID")
+	botStopped := flags.Bool("confirm-bot-stopped", false, "confirm that the previous bot process is stopped before writing")
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if *apply && !*botStopped {
+		fmt.Println("❌ Перед --apply остановите бота и повторите команду с --confirm-bot-stopped.")
+		return 1
 	}
 	logger := getLogger(true).WithField("entry", "migration")
 	storage := chatio.NewIOChatData(logger, GetDataPath())
@@ -32,6 +37,13 @@ func runMigrationCommand(args []string) int {
 }
 
 func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64, now time.Time) error {
+	if apply {
+		dataLock, err := storage.TryAcquireDataDirectoryLock()
+		if err != nil {
+			return fmt.Errorf("нельзя запустить миграцию: остановите бота и другие миграции: %w", err)
+		}
+		defer dataLock.Close()
+	}
 	files, err := storage.GetDatasList()
 	if err != nil {
 		return err

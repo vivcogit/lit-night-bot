@@ -95,3 +95,25 @@ func TestConcurrentSavesRemainReadable(t *testing.T) {
 		t.Fatalf("unreadable final data: %#v", data)
 	}
 }
+
+func TestDataDirectoryLockIsExclusiveAndRecoverable(t *testing.T) {
+	first := newTestStorage(t)
+	second := NewIOChatData(first.logger, first.dataPath)
+	firstLock, err := first.TryAcquireDataDirectoryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.TryAcquireDataDirectoryLock(); !errors.Is(err, ErrDataDirectoryLocked) {
+		t.Fatalf("second writer lock error = %v, want ErrDataDirectoryLocked", err)
+	}
+	if err := firstLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	secondLock, err := second.TryAcquireDataDirectoryLock()
+	if err != nil {
+		t.Fatalf("lock was not released: %v", err)
+	}
+	if err := secondLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -42,6 +42,11 @@ func main() {
 
 	logger := getLogger(config.isDebug)
 	iocd := io.NewIOChatData(logger.WithField("entry", "iocd"), config.dataPath)
+	dataLock, err := iocd.TryAcquireDataDirectoryLock()
+	if err != nil {
+		logger.WithError(err).Fatal("Another bot or migration process is already using the data directory")
+	}
+	defer dataLock.Close()
 	lnb := getBot(logger.WithField("entry", "bot"), iocd, config.token, config.isDebug, config.location)
 
 	cronTasks := []tasks.Task{

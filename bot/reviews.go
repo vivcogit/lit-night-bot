@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	chatdata "lit-night-bot/chat-data"
@@ -15,6 +16,34 @@ import (
 
 const reviewRequestDelay = 15 * time.Minute
 const reviewReminderDelay = 24 * time.Hour
+const reviewDeliveryClaimLease = 15 * time.Minute
+const reviewDeliveryRetryBackoff = 5 * time.Minute
+
+type telegramFailurePolicy int
+
+const (
+	telegramFailureAmbiguous telegramFailurePolicy = iota
+	telegramFailureRetry
+	telegramFailureTerminal
+)
+
+func classifyTelegramFailure(err error, at time.Time) (telegramFailurePolicy, time.Time) {
+	var apiError *tgbotapi.Error
+	if !errors.As(err, &apiError) {
+		return telegramFailureAmbiguous, time.Time{}
+	}
+	if apiError.Code == 429 {
+		delay := time.Duration(apiError.RetryAfter) * time.Second
+		if delay < reviewDeliveryRetryBackoff {
+			delay = reviewDeliveryRetryBackoff
+		}
+		return telegramFailureRetry, at.Add(delay)
+	}
+	if apiError.Code >= 500 {
+		return telegramFailureRetry, at.Add(reviewDeliveryRetryBackoff)
+	}
+	return telegramFailureTerminal, time.Time{}
+}
 
 func truncateUTF16(text string, maxUnits int) string {
 	if maxUnits <= 0 {
@@ -131,7 +160,7 @@ func (lnb *LitNightBot) requestReview(update *tgbotapi.Update, bookID string, lo
 		return
 	}
 	book := lnb.iocd.GetOrCreateChatData(message.Chat.ID).FindBook(bookID)
-	if book == nil || book.Status != chatdata.StatusCompleted || (book.ReviewRequestSentAt == nil && book.ReviewRequestClaimedAt == nil) {
+	if book == nil || !book.ReviewCollectionOpen() {
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Сбор отзывов для этой книги не открыт"))
 		return
 	}
@@ -297,7 +326,7 @@ func (lnb *LitNightBot) showReviews(message *tgbotapi.Message, bookID string, pa
 }
 
 func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData, book *chatdata.ClubBook, at time.Time, logger *logrus.Entry) bool {
-	if book == nil || !book.ClaimReviewRequest(at) {
+	if book == nil || !book.ClaimReviewRequest(at, reviewDeliveryClaimLease) {
 		return false
 	}
 	if !lnb.persistReviewState(chatID, data, logger) {
@@ -307,12 +336,26 @@ func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData,
 	message, err := lnb.SendHTMLMessage(chatID, renderReviewRequest(book), reviewRequestButtons(book.ID))
 	if err != nil {
 		logger.WithError(err).WithField("book_id", book.ID).Error("Failed to send review request")
-		book.ReleaseReviewRequestClaim()
-		lnb.persistReviewState(chatID, data, logger)
+		policy, retryAt := classifyTelegramFailure(err, at)
+		switch policy {
+		case telegramFailureRetry:
+			book.ReleaseReviewRequestClaim()
+			book.ReviewRequestDueAt = &retryAt
+			lnb.persistReviewState(chatID, data, logger)
+		case telegramFailureTerminal:
+			book.CancelPendingReviewRequest()
+			lnb.persistReviewState(chatID, data, logger)
+			logger.WithField("book_id", book.ID).Error("Review request delivery was permanently rejected; cancelling pending delivery")
+		default:
+			logger.WithField("book_id", book.ID).Warn("Review request delivery is ambiguous; keeping claim until lease expires")
+		}
 		return false
 	}
 	book.MarkReviewRequestSent(at, message.MessageID)
 	if !lnb.persistReviewState(chatID, data, logger) {
+		if deleteErr := lnb.removeMessage(chatID, message.MessageID); deleteErr != nil {
+			logger.WithError(deleteErr).WithField("book_id", book.ID).Error("Failed to compensate unpersisted review request")
+		}
 		return false
 	}
 	return true
@@ -360,35 +403,50 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 		book := &data.Books[bookIndex]
 		for reminderIndex := 0; reminderIndex < len(book.ReviewReminders); {
 			reminder := &book.ReviewReminders[reminderIndex]
+			reminderUserID := reminder.UserID
 			if reminder.DueAt.After(at) {
 				reminderIndex++
 				continue
 			}
-			if book.ReviewByUser(reminder.UserID) != nil {
+			if book.ReviewByUser(reminderUserID) != nil {
 				book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
 				lnb.persistReviewState(chatID, data, logger)
 				continue
 			}
-			if reminder.DeliveryClaimedAt != nil {
+			if !reminder.ClaimDelivery(at, reviewDeliveryClaimLease) {
 				reminderIndex++
 				continue
 			}
-			claimedAt := at
-			reminder.DeliveryClaimedAt = &claimedAt
 			if !lnb.persistReviewState(chatID, data, logger) {
-				reminder.DeliveryClaimedAt = nil
+				reminder.ReleaseDeliveryClaim()
 				return sent
 			}
-			if _, err := lnb.SendHTMLMessage(chatID, renderReviewReminder(book, *reminder), reviewRequestButtonsForUser(book.ID, reminder.UserID)); err != nil {
-				logger.WithError(err).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminder.UserID}).Error("Failed to send review reminder")
-				reminder.DeliveryClaimedAt = nil
-				lnb.persistReviewState(chatID, data, logger)
-				reminderIndex++
+			message, err := lnb.SendHTMLMessage(chatID, renderReviewReminder(book, *reminder), reviewRequestButtonsForUser(book.ID, reminderUserID))
+			if err != nil {
+				logger.WithError(err).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to send review reminder")
+				policy, retryAt := classifyTelegramFailure(err, at)
+				switch policy {
+				case telegramFailureRetry:
+					reminder.ReleaseDeliveryClaim()
+					reminder.DueAt = retryAt
+					lnb.persistReviewState(chatID, data, logger)
+					reminderIndex++
+				case telegramFailureTerminal:
+					book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
+					lnb.persistReviewState(chatID, data, logger)
+					logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Review reminder was permanently rejected; cancelling reminder")
+				default:
+					logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Warn("Review reminder delivery is ambiguous; keeping claim until lease expires")
+					reminderIndex++
+				}
 				continue
 			}
 			sent++
 			book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
 			if !lnb.persistReviewState(chatID, data, logger) {
+				if deleteErr := lnb.removeMessage(chatID, message.MessageID); deleteErr != nil {
+					logger.WithError(deleteErr).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to compensate unpersisted review reminder")
+				}
 				return sent
 			}
 		}
@@ -409,8 +467,19 @@ func (lnb *LitNightBot) ProcessDueReviews(at time.Time, logger *logrus.Entry) {
 		}
 		chatLock := lnb.chatMutex(chatID)
 		chatLock.Lock()
-		data := lnb.iocd.GetChatData(chatID)
-		if data == nil {
+		data, loadErr := lnb.iocd.LoadChatData(chatID)
+		if loadErr != nil {
+			logger.WithError(loadErr).WithField("chat_id", chatID).Error("Failed to load chat for review processing")
+			chatLock.Unlock()
+			continue
+		}
+		if data.SchemaVersion != chatdata.CurrentSchemaVersion {
+			logger.WithFields(logrus.Fields{"chat_id": chatID, "schema_version": data.SchemaVersion}).Warn("Skipping review processing for unsupported schema")
+			chatLock.Unlock()
+			continue
+		}
+		if validateErr := data.ValidateV2(); validateErr != nil {
+			logger.WithError(validateErr).WithField("chat_id", chatID).Error("Skipping review processing for invalid data")
 			chatLock.Unlock()
 			continue
 		}

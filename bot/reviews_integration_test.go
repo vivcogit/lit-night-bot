@@ -1,12 +1,15 @@
 package bot
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	chatdata "lit-night-bot/chat-data"
 	chatio "lit-night-bot/io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -17,9 +20,12 @@ import (
 )
 
 type telegramRecorder struct {
-	mu        sync.Mutex
-	texts     []string
-	failSends int
+	mu         sync.Mutex
+	texts      []string
+	failSends  int
+	failAPI    int
+	failCode   int
+	retryAfter int
 }
 
 func (recorder *telegramRecorder) Do(request *http.Request) (*http.Response, error) {
@@ -34,6 +40,17 @@ func (recorder *telegramRecorder) Do(request *http.Request) (*http.Response, err
 		recorder.failSends--
 		recorder.mu.Unlock()
 		return nil, errors.New("telegram unavailable")
+	}
+	if recorder.failAPI > 0 {
+		recorder.failAPI--
+		code := recorder.failCode
+		if code == 0 {
+			code = 500
+		}
+		retryAfter := recorder.retryAfter
+		recorder.mu.Unlock()
+		result := fmt.Sprintf(`{"ok":false,"error_code":%d,"description":"Telegram error","parameters":{"retry_after":%d}}`, code, retryAfter)
+		return telegramHTTPResponse(request, result), nil
 	}
 	recorder.texts = append(recorder.texts, text)
 	messageID := len(recorder.texts)
@@ -161,24 +178,32 @@ func TestConcurrentReviewProcessorsSerializePerChat(t *testing.T) {
 	}
 }
 
-func TestClaimedDeliveryIsNotRetriedAfterRestart(t *testing.T) {
+func TestClaimedDeliveryIsRecoveredAfterLease(t *testing.T) {
 	lnb, storage, recorder := newReviewIntegrationBot(t)
 	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
 	data := scheduledReviewData(now)
 	book := data.FindBook("done0001")
-	if !book.ClaimReviewRequest(now.Add(reviewRequestDelay)) {
+	claimedAt := now.Add(reviewRequestDelay)
+	if !book.ClaimReviewRequest(claimedAt, reviewDeliveryClaimLease) {
 		t.Fatal("request was not claimed")
 	}
 	if err := storage.SaveChatData(-42, data); err != nil {
 		t.Fatal(err)
 	}
-	lnb.ProcessDueReviews(now.Add(24*time.Hour), lnb.logger)
+	lnb.ProcessDueReviews(claimedAt.Add(reviewDeliveryClaimLease-time.Second), lnb.logger)
 	if got := len(recorder.snapshot()); got != 0 {
-		t.Fatalf("uncertain claimed delivery was duplicated: %d", got)
+		t.Fatalf("fresh claim was retried before its lease expired: %d", got)
+	}
+	lnb.ProcessDueReviews(claimedAt.Add(reviewDeliveryClaimLease), lnb.logger)
+	if got := len(recorder.snapshot()); got != 1 {
+		t.Fatalf("expired claim was not recovered: %d", got)
+	}
+	if saved := storage.GetChatData(-42).FindBook("done0001"); saved.ReviewRequestSentAt == nil || saved.ReviewRequestClaimedAt != nil {
+		t.Fatalf("recovered request was not finalized: %#v", saved)
 	}
 }
 
-func TestTelegramFailureReleasesClaimForRetry(t *testing.T) {
+func TestTelegramTransportFailureWaitsForLeaseBeforeRetry(t *testing.T) {
 	lnb, storage, recorder := newReviewIntegrationBot(t)
 	recorder.failSends = 1
 	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
@@ -187,12 +212,115 @@ func TestTelegramFailureReleasesClaimForRetry(t *testing.T) {
 	}
 	lnb.ProcessDueReviews(now.Add(reviewRequestDelay), lnb.logger)
 	afterFailure := storage.GetChatData(-42).FindBook("done0001")
-	if afterFailure.ReviewRequestClaimedAt != nil || afterFailure.ReviewRequestDueAt == nil || afterFailure.ReviewRequestSentAt != nil {
-		t.Fatalf("failed delivery was not released for retry: %#v", afterFailure)
+	if afterFailure.ReviewRequestClaimedAt == nil || afterFailure.ReviewRequestDueAt == nil || afterFailure.ReviewRequestSentAt != nil {
+		t.Fatalf("ambiguous delivery did not retain its claim: %#v", afterFailure)
 	}
-	lnb.ProcessDueReviews(now.Add(reviewRequestDelay+time.Minute), lnb.logger)
+	lnb.ProcessDueReviews(now.Add(reviewRequestDelay+reviewDeliveryRetryBackoff), lnb.logger)
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("ambiguous delivery was retried before lease expiry: %d", got)
+	}
+	lnb.ProcessDueReviews(now.Add(reviewRequestDelay+reviewDeliveryClaimLease), lnb.logger)
 	if got := len(recorder.snapshot()); got != 1 {
-		t.Fatalf("released delivery was not retried exactly once: %d", got)
+		t.Fatalf("ambiguous delivery was not recovered after lease: %d", got)
+	}
+}
+
+func TestTelegramAPIRejectionReleasesClaimForRetry(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	recorder.failAPI = 1
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := scheduledReviewData(now)
+	if err := data.FindBook("done0001").SetReviewReminder(2, "Борис", "", now.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	lnb.ProcessDueReviews(now.Add(reviewRequestDelay), lnb.logger)
+	afterFailure := storage.GetChatData(-42).FindBook("done0001")
+	if afterFailure.ReviewRequestClaimedAt != nil || afterFailure.ReviewRequestSentAt != nil {
+		t.Fatalf("definitively rejected delivery kept its claim: %#v", afterFailure)
+	}
+	if len(afterFailure.ReviewReminders) != 1 {
+		t.Fatalf("retryable failure discarded an existing reminder: %#v", afterFailure.ReviewReminders)
+	}
+	if err := storage.GetChatData(-42).ValidateV2(); err != nil {
+		t.Fatalf("retryable transition produced invalid data: %v", err)
+	}
+	lnb.ProcessDueReviews(now.Add(reviewRequestDelay+reviewDeliveryRetryBackoff), lnb.logger)
+	if got := len(recorder.snapshot()); got != 1 {
+		t.Fatalf("definitively rejected delivery was not retried: %d", got)
+	}
+}
+
+func TestTelegramRateLimitDefersRetry(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	recorder.failAPI = 1
+	recorder.failCode = 429
+	recorder.retryAfter = 600
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	if err := storage.SaveChatData(-42, scheduledReviewData(now)); err != nil {
+		t.Fatal(err)
+	}
+	failedAt := now.Add(reviewRequestDelay)
+	lnb.ProcessDueReviews(failedAt, lnb.logger)
+	deferred := storage.GetChatData(-42).FindBook("done0001")
+	if deferred.ReviewRequestClaimedAt != nil || deferred.ReviewRequestDueAt == nil || !deferred.ReviewRequestDueAt.Equal(failedAt.Add(10*time.Minute)) {
+		t.Fatalf("rate-limited request was not deferred: %#v", deferred)
+	}
+	lnb.ProcessDueReviews(failedAt.Add(9*time.Minute), lnb.logger)
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("rate-limited request retried too early: %d", got)
+	}
+	lnb.ProcessDueReviews(failedAt.Add(10*time.Minute), lnb.logger)
+	if got := len(recorder.snapshot()); got != 1 {
+		t.Fatalf("rate-limited request was not retried: %d", got)
+	}
+}
+
+func TestPermanentTelegramRejectionCancelsDelivery(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	recorder.failAPI = 1
+	recorder.failCode = 403
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := scheduledReviewData(now)
+	if err := data.FindBook("done0001").SetReviewReminder(2, "Борис", "", now.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	lnb.ProcessDueReviews(now.Add(reviewRequestDelay), lnb.logger)
+	cancelled := storage.GetChatData(-42).FindBook("done0001")
+	if cancelled.ReviewRequestClaimedAt != nil || cancelled.ReviewRequestDueAt != nil || cancelled.ReviewRequestSentAt != nil {
+		t.Fatalf("permanently rejected delivery remained pending: %#v", cancelled)
+	}
+	if len(cancelled.ReviewReminders) != 0 {
+		t.Fatalf("permanently rejected delivery kept orphan reminders: %#v", cancelled.ReviewReminders)
+	}
+	lnb.ProcessDueReviews(now.Add(24*time.Hour), lnb.logger)
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("permanently rejected delivery retried: %d", got)
+	}
+}
+
+func TestExpiredReminderClaimIsRecovered(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := scheduledReviewData(now)
+	book := data.FindBook("done0001")
+	book.MarkReviewRequestSent(now, 10)
+	claimedAt := now.Add(-reviewDeliveryClaimLease)
+	book.ReviewReminders = []chatdata.ReviewReminder{{UserID: 2, DisplayName: "Борис", DueAt: now.Add(-time.Hour), DeliveryClaimedAt: &claimedAt}}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	lnb.ProcessDueReviews(now, lnb.logger)
+	if got := len(recorder.snapshot()); got != 1 {
+		t.Fatalf("expired reminder claim was not recovered: %d", got)
+	}
+	if saved := storage.GetChatData(-42).FindBook("done0001"); len(saved.ReviewReminders) != 0 {
+		t.Fatalf("recovered reminder was not finalized: %#v", saved.ReviewReminders)
 	}
 }
 
@@ -243,5 +371,73 @@ func TestCurrentSchemaWithRollbackGuardIsAcceptedAndFutureSchemaRejected(t *test
 	texts := recorder.snapshot()
 	if len(texts) != 1 || !strings.Contains(texts[0], "более новой версией") {
 		t.Fatalf("future-schema explanation was not sent: %#v", texts)
+	}
+}
+
+func TestReviewProcessorDoesNotRewriteFutureSchema(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	raw, err := json.Marshal(scheduledReviewData(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["schema_version"] = chatdata.CurrentSchemaVersion + 1
+	document["future_only"] = map[string]any{"must_survive": true}
+	raw, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := storage.GetChatDataFilePath(-42)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lnb.ProcessDueReviews(now.Add(reviewRequestDelay), lnb.logger)
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, raw) {
+		t.Fatalf("future schema was rewritten:\nbefore=%s\nafter=%s", raw, after)
+	}
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("future schema triggered %d Telegram messages", got)
+	}
+}
+
+func TestPendingCardReviewBlocksOrdinaryActionsButAllowsReviewFlow(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: -42, Type: "group", Title: "Клуб"}
+	data.Books = []chatdata.ClubBook{
+		{ID: "review01", Title: "Проверить", Status: chatdata.StatusWishlist, NeedsReview: true},
+		{ID: "normal01", Title: "Обычная", Status: chatdata.StatusWishlist},
+	}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	chat := &tgbotapi.Chat{ID: -42, Type: "group", Title: "Клуб"}
+	blocked := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{ID: "blocked", Data: GetCallbackParamStr(CBRatingOpen, "review01"), Message: &tgbotapi.Message{Chat: chat}}}
+	if lnb.allowUpdate(blocked, lnb.logger) {
+		t.Fatal("ordinary action was allowed before migrated cards were reviewed")
+	}
+	texts := recorder.snapshot()
+	if len(texts) == 0 || !strings.Contains(texts[len(texts)-1], "проверьте карточки") {
+		t.Fatalf("missing card-review explanation: %#v", texts)
+	}
+	allowed := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{ID: "allowed", Data: GetCallbackParamStr(CBBooksReview, "0"), Message: &tgbotapi.Message{Chat: chat}}}
+	if !lnb.allowUpdate(allowed, lnb.logger) {
+		t.Fatal("card-review action was blocked by the migration gate")
+	}
+	staleCallback := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{ID: "stale", Data: GetCallbackParamStr(CBBookEditTitle, "normal01"), Message: &tgbotapi.Message{Chat: chat}}}
+	if lnb.allowUpdate(staleCallback, lnb.logger) {
+		t.Fatal("stale callback edited a book that does not need migration review")
+	}
+	staleReply := &tgbotapi.Update{Message: &tgbotapi.Message{Chat: chat, Text: "Новое", ReplyToMessage: &tgbotapi.Message{Text: "Введите название.\n\nbook_title:normal01:10"}}}
+	if lnb.allowUpdate(staleReply, lnb.logger) {
+		t.Fatal("stale reply edited a book that does not need migration review")
 	}
 }

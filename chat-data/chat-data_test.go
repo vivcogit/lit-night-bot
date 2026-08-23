@@ -389,3 +389,37 @@ func TestMigrateV1ErrorsAndFallbacks(t *testing.T) {
 		t.Fatalf("zero legacy date fallback failed: %#v", book)
 	}
 }
+
+func TestDeliveryClaimsCanBeRecoveredOnlyAfterLease(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	lease := 15 * time.Minute
+	due := now.Add(-time.Minute)
+	book := ClubBook{Status: StatusCompleted, ReviewRequestDueAt: &due}
+	if !book.ClaimReviewRequest(now, lease) {
+		t.Fatal("initial request claim failed")
+	}
+	if book.ClaimReviewRequest(now.Add(lease-time.Second), lease) {
+		t.Fatal("fresh request claim was stolen")
+	}
+	if !book.ClaimReviewRequest(now.Add(lease), lease) {
+		t.Fatal("expired request claim was not recovered")
+	}
+	reminder := ReviewReminder{UserID: 1, DueAt: due}
+	if !reminder.ClaimDelivery(now, lease) {
+		t.Fatal("initial reminder claim failed")
+	}
+	if reminder.ClaimDelivery(now.Add(lease-time.Second), lease) {
+		t.Fatal("fresh reminder claim was stolen")
+	}
+	if !reminder.ClaimDelivery(now.Add(lease), lease) {
+		t.Fatal("expired reminder claim was not recovered")
+	}
+}
+
+func TestCurrentSchemaRejectsLegacyMigrationSentinel(t *testing.T) {
+	data := NewChatData()
+	data.MigrationComplete = true
+	if err := data.ValidateV2(); err == nil {
+		t.Fatal("current schema accepted migration_complete=true")
+	}
+}
