@@ -101,6 +101,65 @@ func TestPersonalRatingPanelCombinesRatingAndReview(t *testing.T) {
 	}
 }
 
+func buttonLabels(buttons [][]tgbotapi.InlineKeyboardButton) string {
+	var labels []string
+	for _, row := range buttons {
+		for _, button := range row {
+			labels = append(labels, button.Text)
+		}
+	}
+	return strings.Join(labels, "|")
+}
+
+func TestGroupReviewSavedExplainsThatParticipantIsDone(t *testing.T) {
+	book := reviewTestBook()
+	text := renderGroupReviewSaved(book, &tgbotapi.User{ID: 1, FirstName: "Анна"}, false)
+	if !strings.Contains(text, "больше ничего делать не нужно") || !strings.Contains(text, "Остальные участники") {
+		t.Fatalf("group completion is unclear: %s", text)
+	}
+	labels := buttonLabels(groupReviewSavedButtons(book, 1))
+	for _, expected := range []string{"💬 Посмотреть отзывы (1)", "✏️ Изменить мой отзыв", "🗑 Удалить мой отзыв", "Закрыть"} {
+		if !strings.Contains(labels, expected) {
+			t.Fatalf("group completion action %q is missing: %s", expected, labels)
+		}
+	}
+}
+
+func TestPersonalReviewSavedOffersNextBook(t *testing.T) {
+	book := reviewTestBook()
+	book.Ratings = []chatdata.Rating{{UserID: 1, Value: 6}}
+	data := chatdata.NewChatData()
+	data.Books = []chatdata.ClubBook{*book, {ID: "wish0001", Title: "Следующая", Status: chatdata.StatusWishlist}}
+	text := renderPersonalReviewSaved(&data.Books[0], data, 1, false)
+	if !strings.Contains(text, "Оценка: <b>6 из 10</b>") || !strings.Contains(text, "Книга полностью оформлена") {
+		t.Fatalf("unexpected personal completion text: %s", text)
+	}
+	labels := buttonLabels(personalReviewSavedButtons(&data.Books[0], data, 1))
+	for _, expected := range []string{"🎲 Случайная книга", "📘 Выбрать из вишлиста", "📖 Открыть карточку", "✏️ Изменить отзыв", "🗑 Удалить отзыв"} {
+		if !strings.Contains(labels, expected) {
+			t.Fatalf("personal completion action %q is missing: %s", expected, labels)
+		}
+	}
+	if strings.Contains(labels, "⭐ Поставить оценку") || strings.Contains(labels, "➕ Добавить книги") {
+		t.Fatalf("unexpected personal completion actions: %s", labels)
+	}
+}
+
+func TestPersonalReviewSavedHandlesMissingRatingAndEmptyWishlist(t *testing.T) {
+	book := reviewTestBook()
+	book.Ratings = nil
+	data := chatdata.NewChatData()
+	data.Books = []chatdata.ClubBook{*book}
+	text := renderPersonalReviewSaved(&data.Books[0], data, 1, false)
+	if !strings.Contains(text, "пока не поставлена") || !strings.Contains(text, "Вишлист пуст") {
+		t.Fatalf("unexpected incomplete personal text: %s", text)
+	}
+	labels := buttonLabels(personalReviewSavedButtons(&data.Books[0], data, 1))
+	if !strings.Contains(labels, "⭐ Поставить оценку") || !strings.Contains(labels, "➕ Добавить книги") {
+		t.Fatalf("missing incomplete personal actions: %s", labels)
+	}
+}
+
 func TestCompletingPersonalBookOpensReviewWithoutDelayedRequest(t *testing.T) {
 	lnb, storage, _ := newReviewIntegrationBot(t)
 	data := chatdata.NewChatData()

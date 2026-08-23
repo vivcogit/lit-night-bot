@@ -217,6 +217,85 @@ func reviewManageButtons(bookID string, userID int64) [][]tgbotapi.InlineKeyboar
 	}
 }
 
+func groupReviewSavedButtons(book *chatdata.ClubBook, userID int64) [][]tgbotapi.InlineKeyboardButton {
+	params := []string{book.ID, strconv.FormatInt(userID, 10)}
+	return [][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(
+			fmt.Sprintf("💬 Посмотреть отзывы (%d)", len(book.Reviews)),
+			GetCallbackParamStr(CBReviewList, book.ID, "0"),
+		)),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить мой отзыв", GetCallbackParamStr(CBReviewWrite, params...)),
+			tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить мой отзыв", GetCallbackParamStr(CBReviewDelete, params...)),
+		),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel))),
+	}
+}
+
+func renderGroupReviewSaved(book *chatdata.ClubBook, user *tgbotapi.User, updated bool) string {
+	action := "отзыв сохранён"
+	if updated {
+		action = "отзыв обновлён"
+	}
+	return "✅ " + telegramMentionHTML(user.ID, telegramDisplayName(user)) + ", " + action + ".\n\n" +
+		"Готово — больше ничего делать не нужно. Остальные участники могут написать свои отзывы позже."
+}
+
+func personalReviewSavedButtons(book *chatdata.ClubBook, data *chatdata.ChatData, userID int64) [][]tgbotapi.InlineKeyboardButton {
+	buttons := make([][]tgbotapi.InlineKeyboardButton, 0, 7)
+	if book.RatingByUser(userID) == nil {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⭐ Поставить оценку", GetCallbackParamStr(CBRatingOpen, book.ID)),
+		))
+	}
+	if current := data.CurrentBook(); current != nil {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📖 Текущая книга", GetCallbackParamStr(CBCurrentShow)),
+		))
+	} else if len(data.BooksWithStatus(chatdata.StatusWishlist)) == 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("➕ Добавить книги", GetCallbackParamStr(CBWishlistAddBookRequest)),
+		))
+	} else {
+		buttons = append(buttons,
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🎲 Случайная книга", GetCallbackParamStr(CBCurrentRandom))),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📘 Выбрать из вишлиста", GetCallbackParamStr(CBWishlistChoose))),
+		)
+	}
+	buttons = append(buttons,
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📖 Открыть карточку", GetCallbackParamStr(CBReviewBackToBook, book.ID))),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10))),
+			tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить отзыв", GetCallbackParamStr(CBReviewDelete, book.ID, strconv.FormatInt(userID, 10))),
+		),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel))),
+	)
+	return buttons
+}
+
+func renderPersonalReviewSaved(book *chatdata.ClubBook, data *chatdata.ChatData, userID int64, updated bool) string {
+	action := "добавлен"
+	if updated {
+		action = "обновлён"
+	}
+	var text strings.Builder
+	text.WriteString("✅ <b>Отзыв " + action + ".</b>\n\n")
+	if rating := book.RatingByUser(userID); rating != nil {
+		text.WriteString(fmt.Sprintf("⭐ Оценка: <b>%d из 10</b>\n", rating.Value))
+	} else {
+		text.WriteString("⭐ Оценка: <i>пока не поставлена</i>\n")
+	}
+	text.WriteString("💬 Отзыв: <b>сохранён</b>\n\n")
+	if current := data.CurrentBook(); current != nil {
+		text.WriteString("Следующая книга уже выбрана: «" + html.EscapeString(reviewBookName(current)) + "». Больше ничего делать не нужно.")
+	} else if len(data.BooksWithStatus(chatdata.StatusWishlist)) == 0 {
+		text.WriteString("Вишлист пуст. Можно добавить книги сейчас или вернуться к этому позже.")
+	} else {
+		text.WriteString("Книга полностью оформлена. Можно выбрать следующую.")
+	}
+	return text.String()
+}
+
 func (lnb *LitNightBot) requestReview(update *tgbotapi.Update, bookID string, logger *logrus.Entry) {
 	message := update.CallbackQuery.Message
 	user := update.CallbackQuery.From
@@ -268,11 +347,11 @@ func (lnb *LitNightBot) handleReviewReply(message *tgbotapi.Message, original st
 	if !lnb.saveChatData(message.Chat.ID, data, logger) {
 		return true
 	}
-	action := "отзыв сохранён"
-	if updated {
-		action = "отзыв обновлён"
+	if message.Chat.IsPrivate() {
+		lnb.SendHTMLMessage(message.Chat.ID, renderPersonalReviewSaved(book, data, message.From.ID, updated), personalReviewSavedButtons(book, data, message.From.ID))
+	} else {
+		lnb.SendHTMLMessage(message.Chat.ID, renderGroupReviewSaved(book, message.From, updated), groupReviewSavedButtons(book, message.From.ID))
 	}
-	lnb.SendHTMLMessage(message.Chat.ID, "✅ "+telegramMentionHTML(message.From.ID, telegramDisplayName(message.From))+", "+action+".", reviewManageButtons(book.ID, message.From.ID))
 	if message.ReplyToMessage != nil {
 		lnb.removeMessage(message.Chat.ID, message.ReplyToMessage.MessageID)
 	}
