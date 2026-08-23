@@ -235,7 +235,11 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
 			return
 		}
-		lnb.requestReview(update, cbParams[0], logger)
+		sourceView := ""
+		if len(cbParams) > 2 {
+			sourceView = cbParams[2]
+		}
+		lnb.requestReview(update, cbParams[0], sourceView, logger)
 	case CBReviewRemind:
 		if len(cbParams) < 1 {
 			return

@@ -47,6 +47,11 @@ func TestPersonalBookCardShowsReviewInline(t *testing.T) {
 	if strings.Contains(labels, "💬 Мой отзыв") || !strings.Contains(labels, "✏️ Изменить отзыв") || !strings.Contains(labels, "🗑 Удалить отзыв") {
 		t.Fatalf("personal card still requires a separate review page: %s", labels)
 	}
+	buttons := bookCardButtonsForChat(book, true, 1)
+	action, params, err := GetCallbackParam(*buttons[1][0].CallbackData)
+	if err != nil || action != CBReviewWrite || len(params) != 3 || params[2] != reviewSourceCard {
+		t.Fatalf("card edit action lost its source context: %q %#v %v", action, params, err)
+	}
 }
 
 func TestBookFieldForceReplyTargetsCallbackUser(t *testing.T) {

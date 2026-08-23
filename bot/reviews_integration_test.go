@@ -506,7 +506,7 @@ func TestPersonalReviewEditsSourcePanelInsteadOfSendingResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := &tgbotapi.User{ID: 42, FirstName: "Анна"}
-	original := reviewReplyConfigForChat(42, data.FindBook("done0001"), user, true, 99).Text
+	original := reviewReplyConfigForChat(42, data.FindBook("done0001"), user, true, 99, "").Text
 	message := &tgbotapi.Message{
 		MessageID: 101, Chat: &tgbotapi.Chat{ID: 42, Type: "private"}, From: user, Text: "Хорошая книга",
 		ReplyToMessage: &tgbotapi.Message{MessageID: 100, Text: original},
@@ -520,6 +520,37 @@ func TestPersonalReviewEditsSourcePanelInsteadOfSendingResult(t *testing.T) {
 	texts := recorder.snapshot()
 	if len(texts) != 1 || !strings.Contains(texts[0], "Отзыв добавлен") {
 		t.Fatalf("unexpected result messages: %#v", texts)
+	}
+}
+
+func TestEditingReviewFromCardRendersUpdatedCard(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: 42, Type: "private", Title: "Личный дневник"}
+	data.Books = []chatdata.ClubBook{{
+		ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted,
+		ReviewCollectionOpenedAt: &now,
+		Reviews:                  []chatdata.Review{{ID: "review01", UserID: 42, DisplayName: "Анна", Text: "Старый отзыв", CreatedAt: now, UpdatedAt: now}},
+	}}
+	if err := storage.SaveChatData(42, data); err != nil {
+		t.Fatal(err)
+	}
+	user := &tgbotapi.User{ID: 42, FirstName: "Анна"}
+	original := reviewReplyConfigForChat(42, data.FindBook("done0001"), user, true, 99, reviewSourceCard).Text
+	message := &tgbotapi.Message{
+		MessageID: 101, Chat: &tgbotapi.Chat{ID: 42, Type: "private"}, From: user, Text: "Новый отзыв",
+		ReplyToMessage: &tgbotapi.Message{MessageID: 100, Text: original},
+	}
+	if !lnb.handleReviewReply(message, original, lnb.logger) {
+		t.Fatal("personal card review reply was not handled")
+	}
+	if edits := recorder.editIDsSnapshot(); len(edits) != 1 || edits[0] != "99" {
+		t.Fatalf("source card was not edited: %#v", edits)
+	}
+	texts := recorder.snapshot()
+	if len(texts) != 1 || !strings.Contains(texts[0], "💬 Мой отзыв:\nНовый отзыв") || strings.Contains(texts[0], "Отзыв обновлён") {
+		t.Fatalf("updated card was not rendered: %#v", texts)
 	}
 }
 

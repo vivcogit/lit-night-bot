@@ -118,12 +118,12 @@ func bookCardButtonsForChat(book *chatdata.ClubBook, private bool, userID int64)
 		if private {
 			if book.ReviewByUser(userID) != nil {
 				buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10))),
+					tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10), reviewSourceCard)),
 					tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить отзыв", GetCallbackParamStr(CBReviewDelete, book.ID, strconv.FormatInt(userID, 10))),
 				))
 			} else {
 				buttons = append(buttons,
-					tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID))),
+					tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10), reviewSourceCard))),
 					tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID))),
 				)
 			}

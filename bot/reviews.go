@@ -19,6 +19,7 @@ const reviewRequestDelay = 15 * time.Minute
 const reviewReminderDelay = 24 * time.Hour
 const reviewDeliveryClaimLease = 15 * time.Minute
 const reviewDeliveryRetryBackoff = 5 * time.Minute
+const reviewSourceCard = "card"
 
 type telegramFailurePolicy int
 
@@ -164,10 +165,10 @@ func (lnb *LitNightBot) reviewCallbackUserAllowed(update *tgbotapi.Update, param
 }
 
 func reviewReplyConfig(chatID int64, book *chatdata.ClubBook, user *tgbotapi.User) tgbotapi.MessageConfig {
-	return reviewReplyConfigForChat(chatID, book, user, false, 0)
+	return reviewReplyConfigForChat(chatID, book, user, false, 0, "")
 }
 
-func reviewReplyConfigForChat(chatID int64, book *chatdata.ClubBook, user *tgbotapi.User, private bool, sourceMessageID int) tgbotapi.MessageConfig {
+func reviewReplyConfigForChat(chatID int64, book *chatdata.ClubBook, user *tgbotapi.User, private bool, sourceMessageID int, sourceView string) tgbotapi.MessageConfig {
 	action := "Напишите отзыв одним сообщением. Необязательно отвечать на все вопросы — достаточно нескольких предложений."
 	if private {
 		action += "\n\nМожно опираться на вопросы:\n— Что больше всего осталось с вами после чтения?\n— За что вы поставили такую оценку?\n— Кому вы посоветуете или не посоветуете эту книгу?"
@@ -182,35 +183,45 @@ func reviewReplyConfigForChat(chatID int64, book *chatdata.ClubBook, user *tgbot
 	marker := fmt.Sprintf("review:%s:%d", book.ID, userID)
 	if private && sourceMessageID > 0 {
 		marker += ":" + strconv.Itoa(sourceMessageID)
+		if sourceView == reviewSourceCard {
+			marker += ":" + sourceView
+		}
 	}
 	return selectiveForceReplyConfig(chatID, user, action+"\n\n"+marker)
 }
 
 func parseReviewPrompt(text string) (bookID string, userID int64, ok bool) {
-	bookID, userID, _, ok = parseReviewPromptWithSource(text)
+	bookID, userID, _, _, ok = parseReviewPromptWithSource(text)
 	return bookID, userID, ok
 }
 
-func parseReviewPromptWithSource(text string) (bookID string, userID int64, sourceMessageID int, ok bool) {
+func parseReviewPromptWithSource(text string) (bookID string, userID int64, sourceMessageID int, sourceView string, ok bool) {
 	for _, line := range strings.Split(text, "\n") {
 		parts := strings.Split(strings.TrimSpace(line), ":")
-		if (len(parts) != 3 && len(parts) != 4) || parts[0] != "review" {
+		if (len(parts) < 3 || len(parts) > 5) || parts[0] != "review" {
 			continue
 		}
 		parsedUserID, err := strconv.ParseInt(parts[2], 10, 64)
 		if err != nil || strings.TrimSpace(parts[1]) == "" {
-			return "", 0, 0, false
+			return "", 0, 0, "", false
 		}
 		parsedSourceMessageID := 0
-		if len(parts) == 4 {
+		if len(parts) >= 4 {
 			parsedSourceMessageID, err = strconv.Atoi(parts[3])
 			if err != nil || parsedSourceMessageID <= 0 {
-				return "", 0, 0, false
+				return "", 0, 0, "", false
 			}
 		}
-		return parts[1], parsedUserID, parsedSourceMessageID, true
+		parsedSourceView := ""
+		if len(parts) == 5 {
+			if parts[4] != reviewSourceCard {
+				return "", 0, 0, "", false
+			}
+			parsedSourceView = parts[4]
+		}
+		return parts[1], parsedUserID, parsedSourceMessageID, parsedSourceView, true
 	}
-	return "", 0, 0, false
+	return "", 0, 0, "", false
 }
 
 func telegramMentionHTML(userID int64, displayName string) string {
@@ -312,7 +323,7 @@ func renderPersonalReviewSaved(book *chatdata.ClubBook, data *chatdata.ChatData,
 	return text.String()
 }
 
-func (lnb *LitNightBot) requestReview(update *tgbotapi.Update, bookID string, logger *logrus.Entry) {
+func (lnb *LitNightBot) requestReview(update *tgbotapi.Update, bookID string, sourceView string, logger *logrus.Entry) {
 	message := update.CallbackQuery.Message
 	user := update.CallbackQuery.From
 	if user == nil || user.IsBot {
@@ -331,7 +342,7 @@ func (lnb *LitNightBot) requestReview(update *tgbotapi.Update, bookID string, lo
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Сбор отзывов для этой книги не открыт"))
 		return
 	}
-	request := reviewReplyConfigForChat(message.Chat.ID, book, user, message.Chat.IsPrivate(), message.MessageID)
+	request := reviewReplyConfigForChat(message.Chat.ID, book, user, message.Chat.IsPrivate(), message.MessageID, sourceView)
 	if _, err := lnb.bot.Send(request); err != nil {
 		logger.WithError(err).Error("Failed to request review")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось открыть ввод отзыва"))
@@ -341,7 +352,7 @@ func (lnb *LitNightBot) requestReview(update *tgbotapi.Update, bookID string, lo
 }
 
 func (lnb *LitNightBot) handleReviewReply(message *tgbotapi.Message, original string, logger *logrus.Entry) bool {
-	bookID, expectedUserID, sourceMessageID, ok := parseReviewPromptWithSource(original)
+	bookID, expectedUserID, sourceMessageID, sourceView, ok := parseReviewPromptWithSource(original)
 	if !ok {
 		return false
 	}
@@ -366,6 +377,10 @@ func (lnb *LitNightBot) handleReviewReply(message *tgbotapi.Message, original st
 	if message.Chat.IsPrivate() {
 		text := renderPersonalReviewSaved(book, data, message.From.ID, updated)
 		buttons := personalReviewSavedButtons(book, data, message.From.ID)
+		if sourceView == reviewSourceCard {
+			text = renderBookCardForChat(book, true, message.From.ID)
+			buttons = bookCardButtonsForChat(book, true, message.From.ID)
+		}
 		if sourceMessageID > 0 {
 			if _, editErr := lnb.editHTMLMessage(message.Chat.ID, sourceMessageID, text, buttons); editErr != nil {
 				logger.WithError(editErr).WithField("source_message_id", sourceMessageID).Warn("Failed to update personal review source message; sending a new result")

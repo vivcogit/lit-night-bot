@@ -50,14 +50,14 @@ func TestReviewReplyPromptIsSelectiveAndBoundToUser(t *testing.T) {
 
 func TestPersonalReviewPromptUsesReadingQuestions(t *testing.T) {
 	user := &tgbotapi.User{ID: 77, FirstName: "Анна"}
-	config := reviewReplyConfigForChat(77, reviewTestBook(), user, true, 15)
+	config := reviewReplyConfigForChat(77, reviewTestBook(), user, true, 15, reviewSourceCard)
 	for _, fragment := range []string{"после чтения", "За что вы поставили", "Кому вы посоветуете"} {
 		if !strings.Contains(config.Text, fragment) {
 			t.Fatalf("personal review prompt misses %q: %s", fragment, config.Text)
 		}
 	}
-	bookID, userID, sourceMessageID, ok := parseReviewPromptWithSource(config.Text)
-	if !ok || bookID != "book0001" || userID != 77 || sourceMessageID != 15 {
+	bookID, userID, sourceMessageID, sourceView, ok := parseReviewPromptWithSource(config.Text)
+	if !ok || bookID != "book0001" || userID != 77 || sourceMessageID != 15 || sourceView != reviewSourceCard {
 		t.Fatalf("personal review source did not round-trip: %q", config.Text)
 	}
 }
