@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
@@ -15,9 +16,32 @@ import (
 const reviewRequestDelay = 15 * time.Minute
 const reviewReminderDelay = 24 * time.Hour
 
+func truncateUTF16(text string, maxUnits int) string {
+	if maxUnits <= 0 {
+		return ""
+	}
+	if len(utf16.Encode([]rune(text))) <= maxUnits {
+		return text
+	}
+	contentLimit := maxUnits - 1 // reserve one unit for the ellipsis
+	units := 0
+	for index, value := range text {
+		width := len(utf16.Encode([]rune{value}))
+		if units+width > contentLimit {
+			return strings.TrimSpace(text[:index]) + "…"
+		}
+		units += width
+	}
+	return "…"
+}
+
+func reviewBookName(book *chatdata.ClubBook) string {
+	return truncateUTF16(book.DisplayName(), 200)
+}
+
 func renderReviewRequest(book *chatdata.ClubBook) string {
 	return "✍️ <b>Короткое послесловие о книге</b>\n\n" +
-		"«" + html.EscapeString(book.DisplayName()) + "»\n\n" +
+		"«" + html.EscapeString(reviewBookName(book)) + "»\n\n" +
 		"Можно опираться на вопросы:\n" +
 		"— Что больше всего осталось с вами после обсуждения?\n" +
 		"— За что вы поставили такую оценку?\n" +
@@ -84,6 +108,7 @@ func telegramMentionHTML(userID int64, displayName string) string {
 	if displayName == "" {
 		displayName = "Участник"
 	}
+	displayName = truncateUTF16(displayName, 100)
 	return fmt.Sprintf(`<a href="tg://user?id=%d">%s</a>`, userID, html.EscapeString(displayName))
 }
 
@@ -106,7 +131,7 @@ func (lnb *LitNightBot) requestReview(update *tgbotapi.Update, bookID string, lo
 		return
 	}
 	book := lnb.iocd.GetOrCreateChatData(message.Chat.ID).FindBook(bookID)
-	if book == nil || book.Status != chatdata.StatusCompleted || book.ReviewRequestSentAt == nil {
+	if book == nil || book.Status != chatdata.StatusCompleted || (book.ReviewRequestSentAt == nil && book.ReviewRequestClaimedAt == nil) {
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Сбор отзывов для этой книги не открыт"))
 		return
 	}
@@ -216,47 +241,96 @@ func (lnb *LitNightBot) deleteReview(update *tgbotapi.Update, bookID string, log
 	lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
 }
 
-func renderReviews(book *chatdata.ClubBook) string {
+func renderReviewsPage(book *chatdata.ClubBook, page int) (string, int, int) {
 	var text strings.Builder
 	text.WriteString("💬 <b>Отзывы о книге</b>\n")
-	text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
+	text.WriteString("«" + html.EscapeString(reviewBookName(book)) + "»\n\n")
 	if len(book.Reviews) == 0 {
 		text.WriteString("Отзывов пока нет.")
-		return text.String()
+		return text.String(), 0, 0
 	}
-	for index, review := range book.Reviews {
-		text.WriteString(fmt.Sprintf("<b>%d. %s</b>\n%s\n\n", index+1, html.EscapeString(review.DisplayName), html.EscapeString(review.Text)))
+	lastPage := len(book.Reviews) - 1
+	if page < 0 {
+		page = 0
 	}
-	return strings.TrimSpace(text.String())
+	if page > lastPage {
+		page = lastPage
+	}
+	review := book.Reviews[page]
+	displayName := truncateUTF16(review.DisplayName, 100)
+	reviewText := truncateUTF16(review.Text, chatdata.MaxReviewTextUTF16Units)
+	text.WriteString(fmt.Sprintf("<b>%d. %s</b>\n%s", page+1, html.EscapeString(displayName), html.EscapeString(reviewText)))
+	if lastPage > 0 {
+		text.WriteString(fmt.Sprintf("\n\n<i>Отзыв %d из %d</i>", page+1, len(book.Reviews)))
+	}
+	return strings.TrimSpace(text.String()), page, lastPage
 }
 
-func (lnb *LitNightBot) showReviews(message *tgbotapi.Message, bookID string) {
+func reviewListButtons(bookID string, page int, lastPage int) [][]tgbotapi.InlineKeyboardButton {
+	buttons := make([][]tgbotapi.InlineKeyboardButton, 0, 2)
+	if lastPage > 0 {
+		navigation := make([]tgbotapi.InlineKeyboardButton, 0, 2)
+		if page > 0 {
+			navigation = append(navigation, tgbotapi.NewInlineKeyboardButtonData("←", GetCallbackParamStr(CBReviewList, bookID, strconv.Itoa(page-1))))
+		}
+		if page < lastPage {
+			navigation = append(navigation, tgbotapi.NewInlineKeyboardButtonData("→", GetCallbackParamStr(CBReviewList, bookID, strconv.Itoa(page+1))))
+		}
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(navigation...))
+	}
+	buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("← К карточке", GetCallbackParamStr(CBReviewBackToBook, bookID)),
+		tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
+	))
+	return buttons
+}
+
+func (lnb *LitNightBot) showReviews(message *tgbotapi.Message, bookID string, page int) error {
 	book := lnb.iocd.GetOrCreateChatData(message.Chat.ID).FindBook(bookID)
 	if book == nil {
-		lnb.editMessage(message.Chat.ID, message.MessageID, "Книга не найдена.", nil)
-		return
+		_, err := lnb.editMessage(message.Chat.ID, message.MessageID, "Книга не найдена.", nil)
+		return err
 	}
-	buttons := [][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("← К карточке", GetCallbackParamStr(CBReviewBackToBook, book.ID)),
-		tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
-	)}
-	lnb.editHTMLMessage(message.Chat.ID, message.MessageID, renderReviews(book), buttons)
+	text, page, lastPage := renderReviewsPage(book, page)
+	_, err := lnb.editHTMLMessage(message.Chat.ID, message.MessageID, text, reviewListButtons(book.ID, page, lastPage))
+	return err
 }
 
 func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData, book *chatdata.ClubBook, at time.Time, logger *logrus.Entry) bool {
-	if book == nil || book.ReviewRequestSentAt != nil || book.ReviewRequestDueAt == nil {
+	if book == nil || !book.ClaimReviewRequest(at) {
+		return false
+	}
+	if !lnb.persistReviewState(chatID, data, logger) {
+		book.ReleaseReviewRequestClaim()
 		return false
 	}
 	message, err := lnb.SendHTMLMessage(chatID, renderReviewRequest(book), reviewRequestButtons(book.ID))
 	if err != nil {
 		logger.WithError(err).WithField("book_id", book.ID).Error("Failed to send review request")
+		book.ReleaseReviewRequestClaim()
+		lnb.persistReviewState(chatID, data, logger)
 		return false
 	}
 	book.MarkReviewRequestSent(at, message.MessageID)
-	if !lnb.saveChatData(chatID, data, logger) {
+	if !lnb.persistReviewState(chatID, data, logger) {
 		return false
 	}
 	return true
+}
+
+func (lnb *LitNightBot) persistReviewState(chatID int64, data *chatdata.ChatData, logger *logrus.Entry) bool {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := lnb.iocd.SaveChatData(chatID, data); err == nil {
+			return true
+		} else {
+			lastErr = err
+			logger.WithError(err).WithField("attempt", attempt).Error("Failed to persist review delivery state")
+		}
+	}
+	lnb.SendPlainMessage(chatID, dataStorageErrorText)
+	logger.WithError(lastErr).Error("Review delivery state remains claimed to prevent duplicate messages")
+	return false
 }
 
 func (lnb *LitNightBot) sendPendingReviewRequests(chatID int64, data *chatdata.ChatData, at time.Time, dueOnly bool, logger *logrus.Entry) int {
@@ -277,36 +351,47 @@ func (lnb *LitNightBot) sendPendingReviewRequests(chatID int64, data *chatdata.C
 }
 
 func renderReviewReminder(book *chatdata.ClubBook, reminder chatdata.ReviewReminder) string {
-	return telegramMentionHTML(reminder.UserID, reminder.DisplayName) + ", напоминаю об отзыве о книге «" + html.EscapeString(book.DisplayName()) + "». Хотите написать его сейчас?"
+	return telegramMentionHTML(reminder.UserID, reminder.DisplayName) + ", напоминаю об отзыве о книге «" + html.EscapeString(reviewBookName(book)) + "». Хотите написать его сейчас?"
 }
 
 func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.ChatData, at time.Time, logger *logrus.Entry) int {
 	sent := 0
-	changed := false
 	for bookIndex := range data.Books {
 		book := &data.Books[bookIndex]
-		remaining := make([]chatdata.ReviewReminder, 0, len(book.ReviewReminders))
-		for _, reminder := range book.ReviewReminders {
+		for reminderIndex := 0; reminderIndex < len(book.ReviewReminders); {
+			reminder := &book.ReviewReminders[reminderIndex]
 			if reminder.DueAt.After(at) {
-				remaining = append(remaining, reminder)
+				reminderIndex++
 				continue
 			}
 			if book.ReviewByUser(reminder.UserID) != nil {
-				changed = true
+				book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
+				lnb.persistReviewState(chatID, data, logger)
 				continue
 			}
-			if _, err := lnb.SendHTMLMessage(chatID, renderReviewReminder(book, reminder), reviewRequestButtonsForUser(book.ID, reminder.UserID)); err != nil {
+			if reminder.DeliveryClaimedAt != nil {
+				reminderIndex++
+				continue
+			}
+			claimedAt := at
+			reminder.DeliveryClaimedAt = &claimedAt
+			if !lnb.persistReviewState(chatID, data, logger) {
+				reminder.DeliveryClaimedAt = nil
+				return sent
+			}
+			if _, err := lnb.SendHTMLMessage(chatID, renderReviewReminder(book, *reminder), reviewRequestButtonsForUser(book.ID, reminder.UserID)); err != nil {
 				logger.WithError(err).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminder.UserID}).Error("Failed to send review reminder")
-				remaining = append(remaining, reminder)
+				reminder.DeliveryClaimedAt = nil
+				lnb.persistReviewState(chatID, data, logger)
+				reminderIndex++
 				continue
 			}
 			sent++
-			changed = true
+			book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
+			if !lnb.persistReviewState(chatID, data, logger) {
+				return sent
+			}
 		}
-		book.ReviewReminders = remaining
-	}
-	if changed {
-		lnb.saveChatData(chatID, data, logger)
 	}
 	return sent
 }
@@ -322,11 +407,15 @@ func (lnb *LitNightBot) ProcessDueReviews(at time.Time, logger *logrus.Entry) {
 		if err != nil {
 			continue
 		}
+		chatLock := lnb.chatMutex(chatID)
+		chatLock.Lock()
 		data := lnb.iocd.GetChatData(chatID)
 		if data == nil {
+			chatLock.Unlock()
 			continue
 		}
 		lnb.sendPendingReviewRequests(chatID, data, at, true, logger)
 		lnb.sendDueReviewReminders(chatID, data, at, logger)
+		chatLock.Unlock()
 	}
 }

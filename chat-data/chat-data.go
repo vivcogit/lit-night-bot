@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf16"
 
 	"github.com/google/uuid"
 )
 
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
+const MaxReviewTextUTF16Units = 3500
 
 type Book struct {
 	Name string `json:"name"`
@@ -153,10 +155,11 @@ type Review struct {
 }
 
 type ReviewReminder struct {
-	UserID      int64     `json:"user_id"`
-	DisplayName string    `json:"display_name"`
-	Username    string    `json:"username,omitempty"`
-	DueAt       time.Time `json:"due_at"`
+	UserID            int64      `json:"user_id"`
+	DisplayName       string     `json:"display_name"`
+	Username          string     `json:"username,omitempty"`
+	DueAt             time.Time  `json:"due_at"`
+	DeliveryClaimedAt *time.Time `json:"delivery_claimed_at,omitempty"`
 }
 
 type DiscussionSummary struct {
@@ -175,27 +178,28 @@ type ChatMetadata struct {
 }
 
 type ClubBook struct {
-	ID                  string             `json:"id"`
-	Title               string             `json:"title"`
-	Authors             []string           `json:"authors"`
-	LegacyName          string             `json:"legacy_name,omitempty"`
-	NeedsReview         bool               `json:"needs_review,omitempty"`
-	Status              BookStatus         `json:"status"`
-	AddedAt             time.Time          `json:"added_at"`
-	StartedAt           *time.Time         `json:"started_at,omitempty"`
-	CompletedAt         *time.Time         `json:"completed_at,omitempty"`
-	StoppedAt           *time.Time         `json:"stopped_at,omitempty"`
-	Deadline            *time.Time         `json:"deadline,omitempty"`
-	Ratings             []Rating           `json:"ratings"`
-	RatingsClosedAt     *time.Time         `json:"ratings_closed_at,omitempty"`
-	RatingsClosedBy     int64              `json:"ratings_closed_by,omitempty"`
-	RatingsClosedByName string             `json:"ratings_closed_by_name,omitempty"`
-	Reviews             []Review           `json:"reviews"`
-	ReviewRequestDueAt  *time.Time         `json:"review_request_due_at,omitempty"`
-	ReviewRequestSentAt *time.Time         `json:"review_request_sent_at,omitempty"`
-	ReviewRequestMsgID  int                `json:"review_request_message_id,omitempty"`
-	ReviewReminders     []ReviewReminder   `json:"review_reminders,omitempty"`
-	DiscussionSummary   *DiscussionSummary `json:"discussion_summary,omitempty"`
+	ID                     string             `json:"id"`
+	Title                  string             `json:"title"`
+	Authors                []string           `json:"authors"`
+	LegacyName             string             `json:"legacy_name,omitempty"`
+	NeedsReview            bool               `json:"needs_review,omitempty"`
+	Status                 BookStatus         `json:"status"`
+	AddedAt                time.Time          `json:"added_at"`
+	StartedAt              *time.Time         `json:"started_at,omitempty"`
+	CompletedAt            *time.Time         `json:"completed_at,omitempty"`
+	StoppedAt              *time.Time         `json:"stopped_at,omitempty"`
+	Deadline               *time.Time         `json:"deadline,omitempty"`
+	Ratings                []Rating           `json:"ratings"`
+	RatingsClosedAt        *time.Time         `json:"ratings_closed_at,omitempty"`
+	RatingsClosedBy        int64              `json:"ratings_closed_by,omitempty"`
+	RatingsClosedByName    string             `json:"ratings_closed_by_name,omitempty"`
+	Reviews                []Review           `json:"reviews"`
+	ReviewRequestDueAt     *time.Time         `json:"review_request_due_at,omitempty"`
+	ReviewRequestClaimedAt *time.Time         `json:"review_request_claimed_at,omitempty"`
+	ReviewRequestSentAt    *time.Time         `json:"review_request_sent_at,omitempty"`
+	ReviewRequestMsgID     int                `json:"review_request_message_id,omitempty"`
+	ReviewReminders        []ReviewReminder   `json:"review_reminders,omitempty"`
+	DiscussionSummary      *DiscussionSummary `json:"discussion_summary,omitempty"`
 }
 
 func (book *ClubBook) ReviewByUser(userID int64) *Review {
@@ -217,6 +221,9 @@ func (book *ClubBook) SetReview(userID int64, displayName string, username strin
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return false, errors.New("отзыв не может быть пустым")
+	}
+	if len(utf16.Encode([]rune(text))) > MaxReviewTextUTF16Units {
+		return false, fmt.Errorf("отзыв слишком длинный — сократите его до %d символов", MaxReviewTextUTF16Units)
 	}
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
@@ -260,6 +267,7 @@ func (book *ClubBook) ScheduleReviewRequest(dueAt time.Time) bool {
 		return false
 	}
 	book.ReviewRequestDueAt = &dueAt
+	book.ReviewRequestClaimedAt = nil
 	return true
 }
 
@@ -268,17 +276,31 @@ func (book *ClubBook) CancelPendingReviewRequest() bool {
 		return false
 	}
 	book.ReviewRequestDueAt = nil
+	book.ReviewRequestClaimedAt = nil
 	return true
+}
+
+func (book *ClubBook) ClaimReviewRequest(at time.Time) bool {
+	if book.ReviewRequestDueAt == nil || book.ReviewRequestSentAt != nil || book.ReviewRequestClaimedAt != nil {
+		return false
+	}
+	book.ReviewRequestClaimedAt = &at
+	return true
+}
+
+func (book *ClubBook) ReleaseReviewRequestClaim() {
+	book.ReviewRequestClaimedAt = nil
 }
 
 func (book *ClubBook) MarkReviewRequestSent(at time.Time, messageID int) {
 	book.ReviewRequestSentAt = &at
 	book.ReviewRequestDueAt = nil
+	book.ReviewRequestClaimedAt = nil
 	book.ReviewRequestMsgID = messageID
 }
 
 func (book *ClubBook) SetReviewReminder(userID int64, displayName string, username string, dueAt time.Time) error {
-	if book.Status != StatusCompleted || book.ReviewRequestSentAt == nil {
+	if book.Status != StatusCompleted || (book.ReviewRequestSentAt == nil && book.ReviewRequestClaimedAt == nil) {
 		return errors.New("сбор отзывов ещё не начался")
 	}
 	if userID <= 0 {
@@ -365,11 +387,17 @@ func (hi HistoryItem) GetBook() Book  { return hi.Book }
 func getUUID() string { return uuid.New().String()[:8] }
 
 func NewChatData() *ChatData {
-	return &ChatData{SchemaVersion: CurrentSchemaVersion, MigrationComplete: true, Books: []ClubBook{}}
+	// MigrationComplete stays false in v3 so a rolled-back v2 binary refuses to
+	// rewrite the file and discard fields it does not understand.
+	return &ChatData{SchemaVersion: CurrentSchemaVersion, MigrationComplete: false, Books: []ClubBook{}}
 }
 
 func (cd *ChatData) IsLegacy() bool {
 	return cd != nil && cd.SchemaVersion < CurrentSchemaVersion
+}
+
+func (cd *ChatData) IsFutureSchema() bool {
+	return cd != nil && cd.SchemaVersion > CurrentSchemaVersion
 }
 
 func (cd *ChatData) BooksWithStatus(statuses ...BookStatus) []ClubBook {
@@ -549,8 +577,8 @@ func MigrateV1(old *ChatData, now time.Time) (*ChatData, MigrationResult, error)
 	if old == nil {
 		return nil, MigrationResult{}, errors.New("нет данных для миграции")
 	}
-	if !old.IsLegacy() {
-		return nil, MigrationResult{}, errors.New("данные уже мигрированы")
+	if old.SchemaVersion >= 2 {
+		return nil, MigrationResult{}, errors.New("ожидалась схема v1")
 	}
 	migrated := NewChatData()
 	result := MigrationResult{}
@@ -611,11 +639,40 @@ func MigrateV1(old *ChatData, now time.Time) (*ChatData, MigrationResult, error)
 		result.CurrentCount = 1
 	}
 	result.TotalBookCount = len(migrated.Books)
-	migrated.MigrationComplete = result.NeedsReview == 0
+	migrated.MigrationComplete = false
 	if err := migrated.ValidateV2(); err != nil {
 		return nil, result, err
 	}
 	return migrated, result, nil
+}
+
+func MigrateV2(old *ChatData) (*ChatData, MigrationResult, error) {
+	if old == nil || old.SchemaVersion != 2 {
+		return nil, MigrationResult{}, errors.New("ожидалась схема v2")
+	}
+	migrated := *old
+	migrated.SchemaVersion = CurrentSchemaVersion
+	// This is a compatibility guard: a rolled-back v2 binary sees schema v3 as
+	// non-legacy, but refuses to write it while MigrationComplete is false.
+	migrated.MigrationComplete = false
+	result := MigrationResult{TotalBookCount: len(migrated.Books)}
+	for _, book := range migrated.Books {
+		switch book.Status {
+		case StatusWishlist:
+			result.WishlistCount++
+		case StatusReading:
+			result.CurrentCount++
+		case StatusCompleted, StatusUnfinished:
+			result.HistoryCount++
+		}
+		if book.NeedsReview {
+			result.NeedsReview++
+		}
+	}
+	if err := migrated.ValidateV2(); err != nil {
+		return nil, result, err
+	}
+	return &migrated, result, nil
 }
 
 func (cd *ChatData) ValidateV2() error {
@@ -671,6 +728,9 @@ func (cd *ChatData) ValidateV2() error {
 		if book.ReviewRequestDueAt != nil && (book.Status != StatusCompleted || book.RatingsClosedAt == nil || book.ReviewRequestSentAt != nil) {
 			return fmt.Errorf("книга %q содержит некорректное ожидание запроса отзывов", book.ID)
 		}
+		if book.ReviewRequestClaimedAt != nil && (book.ReviewRequestDueAt == nil || book.ReviewRequestSentAt != nil) {
+			return fmt.Errorf("книга %q содержит некорректный захват доставки запроса отзывов", book.ID)
+		}
 		if book.ReviewRequestSentAt != nil && book.Status != StatusCompleted {
 			return fmt.Errorf("книга %q содержит запрос отзывов без завершённого чтения", book.ID)
 		}
@@ -694,6 +754,9 @@ func (cd *ChatData) ValidateV2() error {
 			}
 			if _, exists := reminderUsers[reminder.UserID]; exists {
 				return fmt.Errorf("книга %q содержит повторное напоминание участнику %d", book.ID, reminder.UserID)
+			}
+			if reminder.DeliveryClaimedAt != nil && reminder.DueAt.IsZero() {
+				return fmt.Errorf("книга %q содержит некорректный захват доставки напоминания", book.ID)
 			}
 			reminderUsers[reminder.UserID] = struct{}{}
 		}

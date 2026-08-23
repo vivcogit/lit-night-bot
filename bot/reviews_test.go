@@ -63,7 +63,10 @@ func TestReviewReminderMentionsParticipantInGroup(t *testing.T) {
 }
 
 func TestRenderReviewsEscapesUserContent(t *testing.T) {
-	text := renderReviews(reviewTestBook())
+	text, page, lastPage := renderReviewsPage(reviewTestBook(), 0)
+	if page != 0 || lastPage != 0 {
+		t.Fatalf("unexpected pagination: page=%d last=%d", page, lastPage)
+	}
 	for _, fragment := range []string{"Анна &lt;tag&gt;", "Хорошая &amp; важная"} {
 		if !strings.Contains(text, fragment) {
 			t.Errorf("review list does not contain %q: %s", fragment, text)
@@ -71,6 +74,33 @@ func TestRenderReviewsEscapesUserContent(t *testing.T) {
 	}
 	if strings.Contains(text, "Анна <tag>") {
 		t.Fatalf("review list contains unsafe HTML: %s", text)
+	}
+}
+
+func TestReviewsArePaginatedOnePerTelegramMessage(t *testing.T) {
+	book := reviewTestBook()
+	book.Reviews = append(book.Reviews,
+		chatdata.Review{ID: "two", UserID: 2, DisplayName: "Борис", Text: strings.Repeat("б", 3000)},
+		chatdata.Review{ID: "three", UserID: 3, DisplayName: "Вера", Text: "Третий отзыв"},
+	)
+	text, page, lastPage := renderReviewsPage(book, 1)
+	if page != 1 || lastPage != 2 || !strings.Contains(text, "Борис") || strings.Contains(text, "Анна") || !strings.Contains(text, "Отзыв 2 из 3") {
+		t.Fatalf("unexpected second review page: page=%d last=%d text=%s", page, lastPage, text)
+	}
+	buttons := reviewListButtons(book.ID, page, lastPage)
+	if len(buttons) != 2 || len(buttons[0]) != 2 {
+		t.Fatalf("pagination buttons are missing: %#v", buttons)
+	}
+	_, clampedPage, _ := renderReviewsPage(book, 99)
+	if clampedPage != 2 {
+		t.Fatalf("page was not clamped: %d", clampedPage)
+	}
+}
+
+func TestUTF16TruncationReservesSpaceForEllipsis(t *testing.T) {
+	got := truncateUTF16(strings.Repeat("😀", 10), 7)
+	if len([]rune(got)) != 4 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("unexpected truncation: %q", got)
 	}
 }
 

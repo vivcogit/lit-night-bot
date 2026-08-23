@@ -263,8 +263,16 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		if len(cbParams) < 1 {
 			return
 		}
-		lnb.showReviews(message, cbParams[0])
-		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+		page := 0
+		if len(cbParams) > 1 {
+			page, _ = strconv.Atoi(cbParams[1])
+		}
+		if err := lnb.showReviews(message, cbParams[0], page); err != nil {
+			logger.WithError(err).Warn("Failed to show reviews")
+			lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось открыть отзывы"))
+		} else {
+			lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+		}
 	case CBReviewBackToBook:
 		if len(cbParams) < 1 {
 			return

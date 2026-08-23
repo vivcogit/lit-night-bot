@@ -47,14 +47,25 @@ func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64
 			return fmt.Errorf("чат %d: JSON не читается", chatID)
 		}
 		if !data.IsLegacy() {
+			if data.IsFutureSchema() {
+				return fmt.Errorf("чат %d: схема v%d новее поддерживаемой v%d", chatID, data.SchemaVersion, chatdata.CurrentSchemaVersion)
+			}
 			fmt.Printf("⏭ Чат %d: уже v%d, пропущен\n", chatID, data.SchemaVersion)
 			continue
 		}
-		migrated, result, err := chatdata.MigrateV1(data, now)
+		var migrated *chatdata.ChatData
+		var result chatdata.MigrationResult
+		switch data.SchemaVersion {
+		case 0, 1:
+			migrated, result, err = chatdata.MigrateV1(data, now)
+		case 2:
+			migrated, result, err = chatdata.MigrateV2(data)
+		default:
+			err = fmt.Errorf("неподдерживаемая схема v%d", data.SchemaVersion)
+		}
 		if err != nil {
 			return fmt.Errorf("чат %d: %w", chatID, err)
 		}
-		migrated.MigrationComplete = true
 		if err := migrated.ValidateV2(); err != nil {
 			return fmt.Errorf("чат %d: %w", chatID, err)
 		}
@@ -63,9 +74,9 @@ func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64
 	}
 	if len(candidates) == 0 {
 		if onlyChatID != 0 {
-			fmt.Printf("ℹ️ Для чата %d нет JSON v1, требующего миграции.\n", onlyChatID)
+			fmt.Printf("ℹ️ Для чата %d нет JSON, требующего миграции.\n", onlyChatID)
 		} else {
-			fmt.Println("ℹ️ Нет JSON v1, требующих миграции.")
+			fmt.Println("ℹ️ Нет JSON, требующих миграции.")
 		}
 		return nil
 	}
@@ -80,14 +91,14 @@ func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64
 			return fmt.Errorf("чат %d: резервная копия: %w", candidate.chatID, err)
 		}
 		if err := storage.SaveChatData(candidate.chatID, candidate.migrated); err != nil {
-			return fmt.Errorf("чат %d: запись v2: %w", candidate.chatID, err)
+			return fmt.Errorf("чат %d: запись v%d: %w", candidate.chatID, chatdata.CurrentSchemaVersion, err)
 		}
 		saved := storage.GetChatData(candidate.chatID)
 		if saved == nil || saved.ValidateV2() != nil || len(saved.Books) != candidate.result.TotalBookCount {
 			if restoreErr := storage.RestoreChatData(candidate.chatID, backupPath); restoreErr != nil {
-				return fmt.Errorf("чат %d: проверка v2 и откат не удались: %v", candidate.chatID, restoreErr)
+				return fmt.Errorf("чат %d: проверка v%d и откат не удались: %v", candidate.chatID, chatdata.CurrentSchemaVersion, restoreErr)
 			}
-			return fmt.Errorf("чат %d: v2 не прошёл проверку, выполнен откат", candidate.chatID)
+			return fmt.Errorf("чат %d: v%d не прошёл проверку, выполнен откат", candidate.chatID, chatdata.CurrentSchemaVersion)
 		}
 		fmt.Printf("✅ Чат %d: мигрирован, копия %s\n", candidate.chatID, backupPath)
 	}

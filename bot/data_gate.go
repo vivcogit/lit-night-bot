@@ -11,6 +11,7 @@ import (
 )
 
 const serverMigrationRequiredText = "🔒 Данные бота ещё не обновлены.\n\nАдминистратору сервера нужно выполнить команду migrate. До этого функции бота недоступны."
+const newerSchemaRequiredText = "🔒 Данные созданы более новой версией бота.\n\nОбновите приложение перед продолжением."
 const dataStorageErrorText = "⚠️ Не удалось сохранить данные. Изменение не применено; попробуйте ещё раз позже."
 const dataReadErrorText = "⚠️ Данные чата временно недоступны. Файл не был изменён; обратитесь к администратору."
 
@@ -78,7 +79,14 @@ func (lnb *LitNightBot) allowUpdate(update *tgbotapi.Update, logger *logrus.Entr
 		lnb.SendPlainMessage(chatID, dataReadErrorText)
 		return false
 	}
-	if !data.IsLegacy() && data.MigrationComplete {
+	if data.IsFutureSchema() {
+		if update.CallbackQuery != nil {
+			lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Нужно обновить бота"))
+		}
+		lnb.SendPlainMessage(chatID, newerSchemaRequiredText)
+		return false
+	}
+	if !data.IsLegacy() {
 		if updateChatMetadata(data, update.FromChat()) {
 			if !lnb.saveChatData(chatID, data, logger) {
 				return false

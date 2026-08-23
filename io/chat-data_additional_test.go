@@ -13,7 +13,7 @@ import (
 func TestGetOrCreateAndListData(t *testing.T) {
 	storage := newTestStorage(t)
 	created := storage.GetOrCreateChatData(100)
-	if created.SchemaVersion != chatdata.CurrentSchemaVersion || !created.MigrationComplete {
+	if created.SchemaVersion != chatdata.CurrentSchemaVersion || created.MigrationComplete {
 		t.Fatalf("created data = %#v", created)
 	}
 	if _, err := os.Stat(storage.GetChatDataFilePath(100)); err != nil {

@@ -19,6 +19,11 @@ type LitNightBot struct {
 	location          *time.Location
 }
 
+func (lnb *LitNightBot) chatMutex(chatID int64) *sync.Mutex {
+	lockValue, _ := lnb.locks.LoadOrStore(chatID, &sync.Mutex{})
+	return lockValue.(*sync.Mutex)
+}
+
 func chatIDFromUpdate(update *tgbotapi.Update, log *logrus.Entry) (chatID int64, ok bool) {
 	chat := update.FromChat()
 	if chat == nil {
@@ -63,8 +68,7 @@ func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {
 				return
 			}
 			logger := lnb.getUserLogger(chatID, &update)
-			lockValue, _ := lnb.locks.LoadOrStore(chatID, &sync.Mutex{})
-			chatLock := lockValue.(*sync.Mutex)
+			chatLock := lnb.chatMutex(chatID)
 			chatLock.Lock()
 			defer chatLock.Unlock()
 

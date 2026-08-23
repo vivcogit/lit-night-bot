@@ -105,7 +105,7 @@ func bookCardButtonsForChat(book *chatdata.ClubBook, private bool, userID int64)
 		}
 		buttons = append(buttons, ratingRow)
 		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("💬 Отзывы (%d)", len(book.Reviews)), GetCallbackParamStr(CBReviewList, book.ID)),
+			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("💬 Отзывы (%d)", len(book.Reviews)), GetCallbackParamStr(CBReviewList, book.ID, "0")),
 		))
 	}
 	buttons = append(buttons,
@@ -284,9 +284,6 @@ func (lnb *LitNightBot) approveBookCard(message *tgbotapi.Message, id string, lo
 			remaining++
 		}
 	}
-	if remaining == 0 {
-		data.MigrationComplete = true
-	}
 	if !lnb.saveChatData(message.Chat.ID, data, logger) {
 		return
 	}
@@ -306,10 +303,6 @@ func (lnb *LitNightBot) showBooksForReview(chatID int64, messageID int, page int
 		}
 	}
 	if len(books) == 0 {
-		data.MigrationComplete = true
-		if !lnb.saveChatData(chatID, data, logger) {
-			return
-		}
 		lnb.editMessage(chatID, messageID, migrationCompleteText, nil)
 		return
 	}

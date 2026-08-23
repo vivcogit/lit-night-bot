@@ -122,3 +122,35 @@ func TestMigrateV1RepairsDuplicateUUIDsWithoutDroppingDistinctBooks(t *testing.T
 		t.Fatal(err)
 	}
 }
+
+func TestMigrateV2PreservesBooksAndBlocksOldBinaryWrites(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	v2 := &ChatData{
+		SchemaVersion: 2, MigrationComplete: true,
+		Chat: &ChatMetadata{ID: -42, Type: "group", Title: "Клуб"},
+		Books: []ClubBook{{
+			ID: "book0001", Title: "Книга", Status: StatusCompleted, CompletedAt: &now,
+			Ratings: []Rating{{UserID: 1, DisplayName: "Анна", Value: 9}},
+			Reviews: []Review{{ID: "review01", UserID: 1, DisplayName: "Анна", Text: "Отзыв", CreatedAt: now}},
+		}},
+	}
+	migrated, result, err := MigrateV2(v2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.SchemaVersion != CurrentSchemaVersion || migrated.MigrationComplete || result.TotalBookCount != 1 {
+		t.Fatalf("unexpected v3 migration: result=%+v data=%#v", result, migrated)
+	}
+	if migrated.Chat == nil || migrated.Chat.Title != "Клуб" || len(migrated.Books) != 1 || len(migrated.Books[0].Ratings) != 1 || len(migrated.Books[0].Reviews) != 1 {
+		t.Fatalf("v2 data was not preserved: %#v", migrated)
+	}
+	// This is the exact gate used by the previous v2 binary. It must remain
+	// false so rollback cannot rewrite v3 JSON and strip delivery fields.
+	oldV2WouldAllowWrite := migrated.SchemaVersion >= 2 && migrated.MigrationComplete
+	if oldV2WouldAllowWrite {
+		t.Fatal("a rolled-back v2 binary would accept and rewrite v3 data")
+	}
+	if err := migrated.ValidateV2(); err != nil {
+		t.Fatal(err)
+	}
+}

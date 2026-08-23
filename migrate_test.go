@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	io "io"
+	chatdata "lit-night-bot/chat-data"
 	chatio "lit-night-bot/io"
 	"os"
 	"path/filepath"
@@ -26,6 +28,31 @@ func migrationTestStorage(t *testing.T) (*chatio.IoChatData, string) {
 	return chatio.NewIOChatData(logrus.NewEntry(logger), dir), dir
 }
 
+func TestServerMigrationUpgradesV2WithoutLosingBooks(t *testing.T) {
+	dir := t.TempDir()
+	logger := logrus.New()
+	logger.SetOutput(io.Discard)
+	storage := chatio.NewIOChatData(logrus.NewEntry(logger), dir)
+	v2 := &chatdata.ChatData{
+		SchemaVersion: 2, MigrationComplete: true,
+		Books: []chatdata.ClubBook{{ID: "book0001", Title: "Книга", Status: chatdata.StatusWishlist}},
+	}
+	raw, err := json.Marshal(v2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "42"), raw, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateStoredChats(storage, true, 42, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	migrated := storage.GetChatData(42)
+	if migrated == nil || migrated.SchemaVersion != chatdata.CurrentSchemaVersion || migrated.MigrationComplete || len(migrated.Books) != 1 || migrated.Books[0].Title != "Книга" {
+		t.Fatalf("v2 data was not safely migrated: %#v", migrated)
+	}
+}
+
 func TestServerMigrationDryRunAndApply(t *testing.T) {
 	storage, dir := migrationTestStorage(t)
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
@@ -43,7 +70,7 @@ func TestServerMigrationDryRunAndApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrated := storage.GetChatData(42)
-	if migrated == nil || migrated.IsLegacy() || !migrated.MigrationComplete || len(migrated.Books) != 47 {
+	if migrated == nil || migrated.IsLegacy() || migrated.MigrationComplete || len(migrated.Books) != 47 {
 		t.Fatalf("unexpected migrated data: %#v", migrated)
 	}
 	needsReview := 0

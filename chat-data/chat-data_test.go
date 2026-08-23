@@ -261,6 +261,18 @@ func TestPendingReviewRequestCanBeCancelledBeforeSending(t *testing.T) {
 	}
 }
 
+func TestReviewLengthUsesTelegramSafeUTF16Limit(t *testing.T) {
+	book := ClubBook{Status: StatusCompleted}
+	tooLong := strings.Repeat("😀", MaxReviewTextUTF16Units/2+1)
+	if _, err := book.SetReview(1, "Анна", "", tooLong, time.Now()); err == nil {
+		t.Fatal("review exceeding Telegram UTF-16 limit was accepted")
+	}
+	allowed := strings.Repeat("я", MaxReviewTextUTF16Units)
+	if _, err := book.SetReview(1, "Анна", "", allowed, time.Now()); err != nil {
+		t.Fatalf("review at the limit was rejected: %v", err)
+	}
+}
+
 func TestParseStructuredBookCases(t *testing.T) {
 	tests := []struct {
 		input       string
