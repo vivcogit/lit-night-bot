@@ -21,7 +21,11 @@ const reviewRequestDelay = 15 * time.Minute
 const reviewReminderDelay = 3 * time.Minute
 const reviewDeliveryClaimLease = 15 * time.Minute
 const reviewDeliveryRetryBackoff = 5 * time.Minute
-const reviewSourceCard = "card"
+const (
+	reviewSourceCard   = "card"
+	reviewSourcePrompt = "prompt"
+	reviewSourceRating = "rating"
+)
 
 type telegramFailurePolicy int
 
@@ -405,7 +409,7 @@ const (
 	reviewRemindedText = "⏰ Напомню об отзыве позже.\n\nЕсли захотите написать его раньше, отзыв можно оставить в карточке книги."
 )
 
-func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID string, replacePrompt bool, logger *logrus.Entry) {
+func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID string, sourceView string, logger *logrus.Entry) {
 	message := update.CallbackQuery.Message
 	user := update.CallbackQuery.From
 	if user == nil || user.IsBot {
@@ -434,7 +438,11 @@ func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID s
 		answer = "Напомню завтра об отзыве"
 	}
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, answer))
-	if replacePrompt {
+	if sourceView == reviewSourceRating && message.Chat.IsPrivate() {
+		if _, err := lnb.editHTMLMessage(message.Chat.ID, message.MessageID, renderPersonalRatingPanel(book, false, user.ID), personalRatingPanelButtons(book)); err != nil {
+			logger.WithError(err).Warn("Failed to update personal rating panel after review reminder")
+		}
+	} else if sourceView == reviewSourcePrompt {
 		if _, err := lnb.editMessage(message.Chat.ID, message.MessageID, reviewRemindedText, nil); err != nil {
 			logger.WithError(err).Warn("Failed to replace review reminder prompt")
 		}

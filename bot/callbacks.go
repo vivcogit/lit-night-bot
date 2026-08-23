@@ -244,10 +244,16 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		if len(cbParams) < 1 {
 			return
 		}
-		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+		sourceView := ""
+		if len(cbParams) > 1 && cbParams[1] == reviewSourceRating {
+			sourceView = reviewSourceRating
+		} else if len(cbParams) > 1 {
+			sourceView = reviewSourcePrompt
+		}
+		if sourceView != reviewSourceRating && !lnb.reviewCallbackUserAllowed(update, cbParams) {
 			return
 		}
-		lnb.scheduleReviewReminder(update, cbParams[0], len(cbParams) > 1, logger)
+		lnb.scheduleReviewReminder(update, cbParams[0], sourceView, logger)
 	case CBReviewSkip:
 		if len(cbParams) < 1 {
 			return

@@ -107,10 +107,21 @@ func renderPersonalRatingPanel(book *chatdata.ClubBook, justCompleted bool, user
 	}
 	if book.ReviewByUser(userID) != nil {
 		text.WriteString("💬 Мой отзыв: <b>написан</b>")
+	} else if hasReviewReminder(book, userID) {
+		text.WriteString("⏰ Об отзыве: <b>напомню позже</b>\n\nОценку можно поставить сейчас или вернуться к карточке книги.")
 	} else {
 		text.WriteString("💬 Мой отзыв: <i>пока не написан</i>\n\nКак вам книга?")
 	}
 	return text.String()
+}
+
+func hasReviewReminder(book *chatdata.ClubBook, userID int64) bool {
+	for _, reminder := range book.ReviewReminders {
+		if reminder.UserID == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func renderRatingResult(book *chatdata.ClubBook) string {
@@ -176,10 +187,10 @@ func personalRatingPanelButtons(book *chatdata.ClubBook) [][]tgbotapi.InlineKeyb
 		firstRow,
 		secondRow,
 	}
-	if len(book.Reviews) == 0 {
+	if len(book.Reviews) == 0 && len(book.ReviewReminders) == 0 {
 		buttons = append(buttons,
 			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID))),
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID))),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID, reviewSourceRating))),
 		)
 	}
 	buttons = append(buttons,

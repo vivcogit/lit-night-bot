@@ -178,7 +178,7 @@ func TestReviewDecisionReplacesPersonalizedPrompt(t *testing.T) {
 			name:     "remind",
 			wantText: reviewRemindedText,
 			action: func(lnb *LitNightBot, update *tgbotapi.Update, logger *logrus.Entry) {
-				lnb.scheduleReviewReminder(update, "done0001", true, logger)
+				lnb.scheduleReviewReminder(update, "done0001", reviewSourcePrompt, logger)
 			},
 		},
 		{
@@ -214,6 +214,33 @@ func TestReviewDecisionReplacesPersonalizedPrompt(t *testing.T) {
 				t.Fatalf("replacement text is missing: %#v", got)
 			}
 		})
+	}
+}
+
+func TestReviewReminderUpdatesPersonalRatingPanel(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: 42, Type: "private"}
+	data.Books = append(data.Books, chatdata.ClubBook{
+		ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted, ReviewRequestSentAt: &now,
+	})
+	if err := storage.SaveChatData(42, data); err != nil {
+		t.Fatal(err)
+	}
+	update := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{
+		ID: "callback", From: &tgbotapi.User{ID: 42, FirstName: "Анна"},
+		Message: &tgbotapi.Message{MessageID: 77, Chat: &tgbotapi.Chat{ID: 42, Type: "private"}},
+	}}
+
+	lnb.scheduleReviewReminder(update, "done0001", reviewSourceRating, lnb.logger)
+
+	if got := recorder.editIDsSnapshot(); len(got) != 1 || got[0] != "77" {
+		t.Fatalf("edited messages = %#v, want rating panel 77", got)
+	}
+	texts := recorder.snapshot()
+	if countTextsContaining(texts, "Оценку можно поставить сейчас") != 1 {
+		t.Fatalf("updated panel has no next step: %#v", texts)
 	}
 }
 

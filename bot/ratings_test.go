@@ -119,6 +119,27 @@ func TestPersonalDiaryRatingPanelWithReviewHasNoReviewButton(t *testing.T) {
 	}
 }
 
+func TestPersonalDiaryRatingPanelShowsScheduledReviewReminder(t *testing.T) {
+	book := ratingTestBook()
+	book.ReviewReminders = []chatdata.ReviewReminder{{UserID: 1, DueAt: time.Date(2026, 8, 24, 19, 0, 0, 0, time.UTC)}}
+
+	text := renderPersonalRatingPanel(book, false, 1)
+	if !strings.Contains(text, "Об отзыве: <b>напомню позже</b>") || !strings.Contains(text, "Оценку можно поставить сейчас") {
+		t.Fatalf("scheduled reminder has no clear next step: %s", text)
+	}
+	buttons := personalRatingPanelButtons(book)
+	if len(buttons) != 4 {
+		t.Fatalf("personal button rows = %d, want 4: %#v", len(buttons), buttons)
+	}
+	for _, row := range buttons {
+		for _, button := range row {
+			if strings.Contains(button.Text, "отзыв") {
+				t.Fatalf("review action remained after scheduling reminder: %q", button.Text)
+			}
+		}
+	}
+}
+
 func TestClosedRatingPanelShowsResultAndReopen(t *testing.T) {
 	book := ratingTestBook()
 	now := time.Date(2026, 8, 22, 20, 0, 0, 0, time.UTC)
