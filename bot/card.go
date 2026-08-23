@@ -75,8 +75,8 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 	}
 	if book.Status == chatdata.StatusCompleted {
 		if private {
-			if book.ReviewByUser(userID) != nil {
-				text.WriteString("💬 Мой отзыв: написан\n")
+			if review := book.ReviewByUser(userID); review != nil {
+				text.WriteString("💬 Мой отзыв:\n" + html.EscapeString(truncateUTF16(review.Text, 2500)) + "\n")
 			} else {
 				text.WriteString("💬 Мой отзыв пока не написан\n")
 			}
@@ -118,7 +118,8 @@ func bookCardButtonsForChat(book *chatdata.ClubBook, private bool, userID int64)
 		if private {
 			if book.ReviewByUser(userID) != nil {
 				buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
-					tgbotapi.NewInlineKeyboardButtonData("💬 Мой отзыв", GetCallbackParamStr(CBReviewList, book.ID, "0")),
+					tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10))),
+					tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить отзыв", GetCallbackParamStr(CBReviewDelete, book.ID, strconv.FormatInt(userID, 10))),
 				))
 			} else {
 				buttons = append(buttons,

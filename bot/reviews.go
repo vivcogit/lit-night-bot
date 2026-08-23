@@ -450,7 +450,11 @@ func (lnb *LitNightBot) deleteReview(update *tgbotapi.Update, bookID string, log
 		return
 	}
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Отзыв удалён"))
-	lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
+	if update.CallbackQuery.Message.Chat.IsPrivate() {
+		lnb.showBookCardInPlace(update.CallbackQuery.Message, book.ID)
+	} else {
+		lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
+	}
 }
 
 func renderReviewsPage(book *chatdata.ClubBook, page int) (string, int, int) {

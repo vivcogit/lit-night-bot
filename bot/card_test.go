@@ -36,6 +36,19 @@ func TestPersonalBookCardShowsOnlyOwnRating(t *testing.T) {
 	}
 }
 
+func TestPersonalBookCardShowsReviewInline(t *testing.T) {
+	book := ratingTestBook()
+	book.Reviews = []chatdata.Review{{UserID: 1, DisplayName: "Анна", Text: "Важная <книга> & хороший финал"}}
+	text := renderBookCardForChat(book, true, 1)
+	if !strings.Contains(text, "💬 Мой отзыв:\nВажная &lt;книга&gt; &amp; хороший финал") {
+		t.Fatalf("personal review is not rendered safely in card: %s", text)
+	}
+	labels := buttonLabels(bookCardButtonsForChat(book, true, 1))
+	if strings.Contains(labels, "💬 Мой отзыв") || !strings.Contains(labels, "✏️ Изменить отзыв") || !strings.Contains(labels, "🗑 Удалить отзыв") {
+		t.Fatalf("personal card still requires a separate review page: %s", labels)
+	}
+}
+
 func TestBookFieldForceReplyTargetsCallbackUser(t *testing.T) {
 	user := &tgbotapi.User{ID: 88, FirstName: "Ольга"}
 	request := bookFieldRequestConfig(-100123, user, "book_title", "book0001", 321, "Введите новое название.")
