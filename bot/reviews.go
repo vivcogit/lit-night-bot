@@ -17,8 +17,7 @@ import (
 
 const reviewRequestDelay = 15 * time.Minute
 
-// Temporary test interval. Restore to 24 hours after reminder verification.
-const reviewReminderDelay = 3 * time.Minute
+const reviewReminderDelay = 24 * time.Hour
 const reviewDeliveryClaimLease = 15 * time.Minute
 const reviewDeliveryRetryBackoff = 5 * time.Minute
 const (
@@ -441,6 +440,10 @@ func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID s
 	if sourceView == reviewSourceRating && message.Chat.IsPrivate() {
 		if _, err := lnb.editHTMLMessage(message.Chat.ID, message.MessageID, renderPersonalRatingPanel(book, false, user.ID), personalRatingPanelButtons(book)); err != nil {
 			logger.WithError(err).Warn("Failed to update personal rating panel after review reminder")
+		}
+	} else if sourceView == reviewSourceCard && message.Chat.IsPrivate() {
+		if _, err := lnb.editHTMLMessage(message.Chat.ID, message.MessageID, renderBookCardForChat(book, true, user.ID), bookCardButtonsForChat(book, true, user.ID)); err != nil {
+			logger.WithError(err).Warn("Failed to update personal book card after review reminder")
 		}
 	} else if sourceView == reviewSourcePrompt {
 		if _, err := lnb.editMessage(message.Chat.ID, message.MessageID, reviewRemindedText, nil); err != nil {

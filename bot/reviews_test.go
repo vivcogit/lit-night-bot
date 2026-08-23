@@ -35,9 +35,9 @@ func TestReviewRequestContainsPromptsAndActions(t *testing.T) {
 	}
 }
 
-func TestReviewReminderUsesTemporaryTestDelay(t *testing.T) {
-	if reviewReminderDelay != 3*time.Minute {
-		t.Fatalf("review reminder delay = %s, want temporary 3m", reviewReminderDelay)
+func TestReviewReminderUsesTomorrowDelay(t *testing.T) {
+	if reviewReminderDelay != 24*time.Hour {
+		t.Fatalf("review reminder delay = %s, want 24h", reviewReminderDelay)
 	}
 }
 

@@ -1,12 +1,22 @@
 package bot
 
 import (
+	"html"
 	chatdata "lit-night-bot/chat-data"
+	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+
+func visibleHTMLUTF16Units(text string) int {
+	plain := html.UnescapeString(htmlTagPattern.ReplaceAllString(text, ""))
+	return len(utf16.Encode([]rune(plain)))
+}
 
 func TestRenderBookCardEscapesHTML(t *testing.T) {
 	book := &chatdata.ClubBook{
@@ -51,6 +61,47 @@ func TestPersonalBookCardShowsReviewInline(t *testing.T) {
 	action, params, err := GetCallbackParam(*buttons[1][0].CallbackData)
 	if err != nil || action != CBReviewWrite || len(params) != 3 || params[2] != reviewSourceCard {
 		t.Fatalf("card edit action lost its source context: %q %#v %v", action, params, err)
+	}
+}
+
+func TestPersonalBookCardShowsScheduledReviewReminder(t *testing.T) {
+	book := ratingTestBook()
+	withoutReminder := bookCardButtonsForChat(book, true, 1)
+	var reminderCallback string
+	for _, row := range withoutReminder {
+		for _, button := range row {
+			if button.Text == "⏰ Напомнить завтра об отзыве" {
+				reminderCallback = *button.CallbackData
+			}
+		}
+	}
+	action, params, err := GetCallbackParam(reminderCallback)
+	if err != nil || action != CBReviewRemind || len(params) != 3 || params[1] != "1" || params[2] != reviewSourceCard {
+		t.Fatalf("card reminder lost user/source context: %q %#v %v", action, params, err)
+	}
+
+	book.ReviewReminders = []chatdata.ReviewReminder{{UserID: 1}}
+	text := renderBookCardForChat(book, true, 1)
+	labels := buttonLabels(bookCardButtonsForChat(book, true, 1))
+	if !strings.Contains(text, "Об отзыве напомню позже") {
+		t.Fatalf("card does not show scheduled reminder: %s", text)
+	}
+	if strings.Contains(labels, "Напомнить") || !strings.Contains(labels, "Написать отзыв") {
+		t.Fatalf("unexpected reminder-state actions: %s", labels)
+	}
+}
+
+func TestPersonalBookCardFitsTelegramMessageLimit(t *testing.T) {
+	book := ratingTestBook()
+	book.Title = strings.Repeat("😀", 2500)
+	book.Authors = []string{strings.Repeat("А", 5000)}
+	book.LegacyName = strings.Repeat("Б", 5000)
+	book.NeedsReview = true
+	book.Reviews = []chatdata.Review{{UserID: 1, Text: strings.Repeat("😀", chatdata.MaxReviewTextUTF16Units/2)}}
+
+	text := renderBookCardForChat(book, true, 1)
+	if units := visibleHTMLUTF16Units(text); units > 4096 {
+		t.Fatalf("personal card has %d UTF-16 units, Telegram limit is 4096", units)
 	}
 }
 

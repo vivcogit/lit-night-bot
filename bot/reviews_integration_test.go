@@ -244,6 +244,39 @@ func TestReviewReminderUpdatesPersonalRatingPanel(t *testing.T) {
 	}
 }
 
+func TestReviewReminderUpdatesPersonalBookCard(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: 42, Type: "private"}
+	data.Books = append(data.Books, chatdata.ClubBook{
+		ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted, ReviewRequestSentAt: &now,
+	})
+	if err := storage.SaveChatData(42, data); err != nil {
+		t.Fatal(err)
+	}
+	update := &tgbotapi.Update{CallbackQuery: &tgbotapi.CallbackQuery{
+		ID: "callback", From: &tgbotapi.User{ID: 42, FirstName: "Анна"},
+		Message: &tgbotapi.Message{MessageID: 77, Chat: &tgbotapi.Chat{ID: 42, Type: "private"}},
+	}}
+
+	before := time.Now()
+	lnb.scheduleReviewReminder(update, "done0001", reviewSourceCard, lnb.logger)
+	after := time.Now()
+
+	if got := recorder.editIDsSnapshot(); len(got) != 1 || got[0] != "77" {
+		t.Fatalf("edited messages = %#v, want book card 77", got)
+	}
+	texts := recorder.snapshot()
+	if countTextsContaining(texts, "Об отзыве напомню позже") != 1 {
+		t.Fatalf("updated card has no reminder state: %#v", texts)
+	}
+	saved := storage.GetChatData(42).FindBook("done0001")
+	if len(saved.ReviewReminders) != 1 || saved.ReviewReminders[0].DueAt.Before(before.Add(24*time.Hour)) || saved.ReviewReminders[0].DueAt.After(after.Add(24*time.Hour)) {
+		t.Fatalf("reminder was not scheduled for tomorrow: %#v", saved.ReviewReminders)
+	}
+}
+
 func TestReviewDecisionKeepsSharedGroupPrompt(t *testing.T) {
 	lnb, storage, recorder := newReviewIntegrationBot(t)
 	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)

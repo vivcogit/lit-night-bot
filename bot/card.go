@@ -13,6 +13,12 @@ import (
 
 const migrationCompleteText = "✅ Все карточки проверены."
 
+const (
+	cardBookFieldUTF16Limit = 600
+	cardReviewUTF16Limit    = 2000
+	cardAuxFieldUTF16Limit  = 400
+)
+
 func statusLabel(status chatdata.BookStatus) string {
 	switch status {
 	case chatdata.StatusWishlist:
@@ -38,9 +44,9 @@ func renderBookCard(book *chatdata.ClubBook) string {
 
 func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) string {
 	var text strings.Builder
-	text.WriteString("📖 <b>" + html.EscapeString(book.Title) + "</b>\n")
+	text.WriteString("📖 <b>" + html.EscapeString(truncateUTF16(book.Title, cardBookFieldUTF16Limit)) + "</b>\n")
 	if len(book.Authors) > 0 {
-		text.WriteString("✍️ " + html.EscapeString(strings.Join(book.Authors, ", ")) + "\n")
+		text.WriteString("✍️ " + html.EscapeString(truncateUTF16(strings.Join(book.Authors, ", "), cardBookFieldUTF16Limit)) + "\n")
 	} else {
 		text.WriteString("✍️ <i>Автор не указан</i>\n")
 	}
@@ -52,7 +58,7 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 		text.WriteString("📅 Завершили чтение: " + book.StoppedAt.Format(DATE_LAYOUT) + "\n")
 	}
 	if book.UnfinishedReason != nil {
-		text.WriteString("💬 Причина: " + html.EscapeString(book.UnfinishedReason.DisplayText()) + "\n")
+		text.WriteString("💬 Причина: " + html.EscapeString(truncateUTF16(book.UnfinishedReason.DisplayText(), cardAuxFieldUTF16Limit)) + "\n")
 	}
 	if book.Deadline != nil {
 		text.WriteString("🗓 Дедлайн: " + book.Deadline.Format(DATE_LAYOUT) + "\n")
@@ -76,7 +82,9 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 	if book.Status == chatdata.StatusCompleted {
 		if private {
 			if review := book.ReviewByUser(userID); review != nil {
-				text.WriteString("💬 Мой отзыв:\n" + html.EscapeString(truncateUTF16(review.Text, 2500)) + "\n")
+				text.WriteString("💬 Мой отзыв:\n" + html.EscapeString(truncateUTF16(review.Text, cardReviewUTF16Limit)) + "\n")
+			} else if hasReviewReminder(book, userID) {
+				text.WriteString("⏰ Об отзыве напомню позже\n")
 			} else {
 				text.WriteString("💬 Мой отзыв пока не написан\n")
 			}
@@ -87,7 +95,7 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 	if book.NeedsReview {
 		text.WriteString("\n⚠️ <b>Карточка создана миграцией и требует проверки.</b>\n")
 		if book.LegacyName != "" {
-			text.WriteString("Было: <i>" + html.EscapeString(book.LegacyName) + "</i>\n")
+			text.WriteString("Было: <i>" + html.EscapeString(truncateUTF16(book.LegacyName, cardAuxFieldUTF16Limit)) + "</i>\n")
 		}
 	}
 	return text.String()
@@ -122,10 +130,14 @@ func bookCardButtonsForChat(book *chatdata.ClubBook, private bool, userID int64)
 					tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить отзыв", GetCallbackParamStr(CBReviewDelete, book.ID, strconv.FormatInt(userID, 10))),
 				))
 			} else {
-				buttons = append(buttons,
-					tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10), reviewSourceCard))),
-					tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID))),
-				)
+				buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10), reviewSourceCard)),
+				))
+				if !hasReviewReminder(book, userID) {
+					buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID, strconv.FormatInt(userID, 10), reviewSourceCard)),
+					))
+				}
 			}
 		} else {
 			buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(

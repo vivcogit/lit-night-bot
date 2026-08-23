@@ -69,6 +69,10 @@ func renderRatingPanel(book *chatdata.ClubBook, justCompleted bool) string {
 	return renderRatingPanelForChat(book, justCompleted, false, 0)
 }
 
+func ratingBookName(book *chatdata.ClubBook) string {
+	return truncateUTF16(book.DisplayName(), 1000)
+}
+
 func renderRatingPanelForChat(book *chatdata.ClubBook, justCompleted bool, private bool, userID int64) string {
 	if private {
 		return renderPersonalRatingPanel(book, justCompleted, userID)
@@ -78,10 +82,10 @@ func renderRatingPanelForChat(book *chatdata.ClubBook, justCompleted bool, priva
 	}
 	var text strings.Builder
 	if justCompleted {
-		text.WriteString("✅ <b>«" + html.EscapeString(book.DisplayName()) + "» обсуждена!</b>\n\n")
+		text.WriteString("✅ <b>«" + html.EscapeString(ratingBookName(book)) + "» обсуждена!</b>\n\n")
 	} else {
 		text.WriteString("⭐ <b>Оценка книги</b>\n")
-		text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
+		text.WriteString("«" + html.EscapeString(ratingBookName(book)) + "»\n\n")
 	}
 	text.WriteString("Как вам книга?\n\n")
 	if len(book.Ratings) == 0 {
@@ -95,10 +99,10 @@ func renderRatingPanelForChat(book *chatdata.ClubBook, justCompleted bool, priva
 func renderPersonalRatingPanel(book *chatdata.ClubBook, justCompleted bool, userID int64) string {
 	var text strings.Builder
 	if justCompleted {
-		text.WriteString("✅ <b>«" + html.EscapeString(book.DisplayName()) + "» прочитана!</b>\n\n")
+		text.WriteString("✅ <b>«" + html.EscapeString(ratingBookName(book)) + "» прочитана!</b>\n\n")
 	} else {
 		text.WriteString("📚 <b>Личный читательский дневник</b>\n")
-		text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
+		text.WriteString("«" + html.EscapeString(ratingBookName(book)) + "»\n\n")
 	}
 	if rating := book.RatingByUser(userID); rating != nil {
 		text.WriteString(fmt.Sprintf("⭐ Моя оценка: <b>%d из 10</b>\n", rating.Value))
@@ -127,7 +131,7 @@ func hasReviewReminder(book *chatdata.ClubBook, userID int64) bool {
 func renderRatingResult(book *chatdata.ClubBook) string {
 	var text strings.Builder
 	text.WriteString("🏁 <b>Сбор оценок завершён</b>\n\n")
-	text.WriteString("📖 «" + html.EscapeString(book.DisplayName()) + "»\n")
+	text.WriteString("📖 «" + html.EscapeString(ratingBookName(book)) + "»\n")
 	if len(book.Ratings) == 0 {
 		text.WriteString("⭐ Итоговой оценки нет\n")
 		text.WriteString("👥 Никто не проголосовал")
@@ -260,7 +264,7 @@ func renderRatingsList(book *chatdata.ClubBook, page int) (string, int, int) {
 	}
 	var text strings.Builder
 	text.WriteString("⭐ <b>Оценки книги</b>\n")
-	text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
+	text.WriteString("«" + html.EscapeString(ratingBookName(book)) + "»\n\n")
 	if len(ratings) == 0 {
 		text.WriteString("Оценок пока нет.")
 		return text.String(), page, lastPage
@@ -405,7 +409,7 @@ func (lnb *LitNightBot) requestRatingDelete(update *tgbotapi.Update, bookID stri
 		tgbotapi.NewInlineKeyboardButtonData("Удалить", GetCallbackParamStr(CBRatingDeleteConfirm, book.ID, strconv.FormatInt(user.ID, 10), strconv.Itoa(message.MessageID))),
 		tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBRatingDeleteCancel, strconv.FormatInt(user.ID, 10))),
 	)}
-	text := fmt.Sprintf("🗑 <b>%s</b>, удалить вашу оценку книге «%s»?", html.EscapeString(telegramDisplayName(user)), html.EscapeString(book.DisplayName()))
+	text := fmt.Sprintf("🗑 <b>%s</b>, удалить вашу оценку книге «%s»?", html.EscapeString(telegramDisplayName(user)), html.EscapeString(ratingBookName(book)))
 	lnb.SendHTMLMessage(message.Chat.ID, text, buttons)
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
 }

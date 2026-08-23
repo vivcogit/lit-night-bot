@@ -96,6 +96,21 @@ func TestPersonalDiaryWithoutRating(t *testing.T) {
 	}
 }
 
+func TestRatingPanelsFitTelegramMessageLimit(t *testing.T) {
+	book := ratingTestBook()
+	book.Title = strings.Repeat("😀", 2500)
+	book.Authors = []string{strings.Repeat("А", 5000)}
+	for _, text := range []string{
+		renderRatingPanelForChat(book, true, false, 1),
+		renderPersonalRatingPanel(book, true, 1),
+		renderRatingResult(book),
+	} {
+		if units := visibleHTMLUTF16Units(text); units > 4096 {
+			t.Fatalf("rating panel has %d UTF-16 units, Telegram limit is 4096", units)
+		}
+	}
+}
+
 func TestPersonalDiaryRatingPanelWithReviewHasNoReviewButton(t *testing.T) {
 	book := ratingTestBook()
 	book.Reviews = []chatdata.Review{{

@@ -247,6 +247,8 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		sourceView := ""
 		if len(cbParams) > 1 && cbParams[1] == reviewSourceRating {
 			sourceView = reviewSourceRating
+		} else if len(cbParams) > 2 && cbParams[2] == reviewSourceCard {
+			sourceView = reviewSourceCard
 		} else if len(cbParams) > 1 {
 			sourceView = reviewSourcePrompt
 		}
