@@ -176,11 +176,7 @@ func personalRatingPanelButtons(book *chatdata.ClubBook) [][]tgbotapi.InlineKeyb
 		firstRow,
 		secondRow,
 	}
-	if len(book.Reviews) > 0 {
-		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("💬 Мой отзыв", GetCallbackParamStr(CBReviewList, book.ID, "0")),
-		))
-	} else {
+	if len(book.Reviews) == 0 {
 		buttons = append(buttons,
 			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID))),
 			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID))),

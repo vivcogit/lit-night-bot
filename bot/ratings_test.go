@@ -96,6 +96,29 @@ func TestPersonalDiaryWithoutRating(t *testing.T) {
 	}
 }
 
+func TestPersonalDiaryRatingPanelWithReviewHasNoReviewButton(t *testing.T) {
+	book := ratingTestBook()
+	book.Reviews = []chatdata.Review{{
+		ID:          "review01",
+		UserID:      1,
+		DisplayName: "Анна",
+		Text:        "Мой отзыв",
+		CreatedAt:   time.Date(2026, 8, 23, 19, 0, 0, 0, time.UTC),
+	}}
+
+	buttons := ratingPanelButtonsForChat(book, true)
+	if len(buttons) != 4 {
+		t.Fatalf("personal button rows = %d, want 4: %#v", len(buttons), buttons)
+	}
+	for _, row := range buttons {
+		for _, button := range row {
+			if strings.Contains(button.Text, "отзыв") || strings.Contains(button.Text, "Отзыв") {
+				t.Fatalf("review action remained on rating edit screen: %q", button.Text)
+			}
+		}
+	}
+}
+
 func TestClosedRatingPanelShowsResultAndReopen(t *testing.T) {
 	book := ratingTestBook()
 	now := time.Date(2026, 8, 22, 20, 0, 0, 0, time.UTC)
