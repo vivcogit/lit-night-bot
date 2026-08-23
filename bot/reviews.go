@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	chatdata "lit-night-bot/chat-data"
+	"lit-night-bot/utils"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,63 @@ const (
 	telegramFailureRetry
 	telegramFailureTerminal
 )
+
+type persistenceOutcome int
+
+const (
+	persistenceNotCommitted persistenceOutcome = iota
+	persistenceDurable
+	persistenceCommittedUncertain
+)
+
+type reviewDeliveryKey struct {
+	chatID int64
+	bookID string
+	userID int64
+}
+
+func isTelegramRateLimit(err error) bool {
+	var apiError *tgbotapi.Error
+	return errors.As(err, &apiError) && apiError.Code == 429
+}
+
+func (lnb *LitNightBot) automatedReviewDeliveryAllowed(key reviewDeliveryKey, at time.Time) bool {
+	lnb.reviewRetryMu.Lock()
+	defer lnb.reviewRetryMu.Unlock()
+	retryAt, exists := lnb.reviewRetryAt[key]
+	if !exists {
+		return true
+	}
+	if at.Before(retryAt) {
+		return false
+	}
+	delete(lnb.reviewRetryAt, key)
+	return true
+}
+
+func (lnb *LitNightBot) rememberAutomatedReviewRetry(key reviewDeliveryKey, retryAt time.Time) {
+	lnb.reviewRetryMu.Lock()
+	defer lnb.reviewRetryMu.Unlock()
+	if lnb.reviewRetryAt == nil {
+		lnb.reviewRetryAt = make(map[reviewDeliveryKey]time.Time)
+	}
+	if existing := lnb.reviewRetryAt[key]; retryAt.After(existing) {
+		lnb.reviewRetryAt[key] = retryAt
+	}
+}
+
+func (lnb *LitNightBot) clearAutomatedReviewRetry(key reviewDeliveryKey) {
+	lnb.reviewRetryMu.Lock()
+	defer lnb.reviewRetryMu.Unlock()
+	delete(lnb.reviewRetryAt, key)
+}
+
+func (lnb *LitNightBot) reviewFailureTime(fallback time.Time) time.Time {
+	if lnb.reviewNow == nil {
+		return fallback
+	}
+	return lnb.reviewNow()
+}
 
 func classifyTelegramFailure(err error, at time.Time) (telegramFailurePolicy, time.Time) {
 	var apiError *tgbotapi.Error
@@ -326,25 +384,41 @@ func (lnb *LitNightBot) showReviews(message *tgbotapi.Message, bookID string, pa
 }
 
 func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData, book *chatdata.ClubBook, at time.Time, logger *logrus.Entry) (bool, bool) {
-	if book == nil || !book.ClaimReviewRequest(at, reviewDeliveryClaimLease) {
+	if book == nil {
 		return false, true
 	}
-	if !lnb.persistReviewState(chatID, data, logger) {
+	deliveryKey := reviewDeliveryKey{chatID: chatID, bookID: strings.ToLower(book.ID)}
+	if !lnb.automatedReviewDeliveryAllowed(deliveryKey, at) {
+		return false, true
+	}
+	if !book.ClaimReviewRequest(at, reviewDeliveryClaimLease) {
+		return false, true
+	}
+	if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
 		return false, false
 	}
 	message, err := lnb.SendHTMLMessage(chatID, renderReviewRequest(book), reviewRequestButtons(book.ID))
 	if err != nil {
 		logger.WithError(err).WithField("book_id", book.ID).Error("Failed to send review request")
-		policy, retryAt := classifyTelegramFailure(err, at)
+		policy, retryAt := classifyTelegramFailure(err, lnb.reviewFailureTime(at))
 		switch policy {
 		case telegramFailureRetry:
+			rateLimited := isTelegramRateLimit(err)
+			if rateLimited {
+				lnb.rememberAutomatedReviewRetry(deliveryKey, retryAt)
+			}
 			book.DeferReviewRequest(retryAt)
-			if !lnb.persistReviewState(chatID, data, logger) {
+			if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
+				if rateLimited {
+					logger.WithFields(logrus.Fields{"book_id": book.ID, "retry_at": retryAt, "retry_not_before_volatile": true}).Error("RetryAfter is protected only until process restart because durable persistence failed")
+				}
 				return false, false
 			}
+			lnb.clearAutomatedReviewRetry(deliveryKey)
 		case telegramFailureTerminal:
+			lnb.clearAutomatedReviewRetry(deliveryKey)
 			book.CancelPendingReviewRequest()
-			if !lnb.persistReviewState(chatID, data, logger) {
+			if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
 				return false, false
 			}
 			logger.WithField("book_id", book.ID).Error("Review request delivery was permanently rejected; cancelling pending delivery")
@@ -354,28 +428,46 @@ func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData,
 		return false, true
 	}
 	book.MarkReviewRequestSent(at, message.MessageID)
-	if !lnb.persistReviewState(chatID, data, logger) {
-		if deleteErr := lnb.removeMessage(chatID, message.MessageID); deleteErr != nil {
-			logger.WithError(deleteErr).WithField("book_id", book.ID).Error("Failed to compensate unpersisted review request")
+	lnb.clearAutomatedReviewRetry(deliveryKey)
+	persisted := lnb.persistReviewState(chatID, data, logger)
+	if persisted != persistenceDurable {
+		if persisted == persistenceNotCommitted {
+			if deleteErr := lnb.removeMessage(chatID, message.MessageID); deleteErr != nil {
+				logger.WithError(deleteErr).WithField("book_id", book.ID).Error("Failed to compensate unpersisted review request")
+			}
+		} else {
+			logger.WithField("book_id", book.ID).Error("Review request was committed, but directory durability is uncertain; skipping compensation")
 		}
 		return false, false
 	}
 	return true, true
 }
 
-func (lnb *LitNightBot) persistReviewState(chatID int64, data *chatdata.ChatData, logger *logrus.Entry) bool {
+func (lnb *LitNightBot) saveReviewState(chatID int64, data *chatdata.ChatData) error {
+	if lnb.reviewStateSaver != nil {
+		return lnb.reviewStateSaver(chatID, data)
+	}
+	return lnb.iocd.SaveChatData(chatID, data)
+}
+
+func (lnb *LitNightBot) persistReviewState(chatID int64, data *chatdata.ChatData, logger *logrus.Entry) persistenceOutcome {
 	var lastErr error
+	committed := false
 	for attempt := 1; attempt <= 3; attempt++ {
-		if err := lnb.iocd.SaveChatData(chatID, data); err == nil {
-			return true
+		if err := lnb.saveReviewState(chatID, data); err == nil {
+			return persistenceDurable
 		} else {
 			lastErr = err
+			committed = committed || utils.IsPostCommitDurabilityError(err)
 			logger.WithError(err).WithField("attempt", attempt).Error("Failed to persist review delivery state")
 		}
 	}
-	lnb.SendPlainMessage(chatID, dataStorageErrorText)
 	logger.WithError(lastErr).Error("Review delivery state remains claimed to prevent duplicate messages")
-	return false
+	if committed {
+		return persistenceCommittedUncertain
+	}
+	lnb.SendPlainMessage(chatID, dataStorageErrorText)
+	return persistenceNotCommitted
 }
 
 func (lnb *LitNightBot) sendPendingReviewRequests(chatID int64, data *chatdata.ChatData, at time.Time, dueOnly bool, logger *logrus.Entry) (int, bool) {
@@ -416,50 +508,78 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 			}
 			if book.ReviewByUser(reminderUserID) != nil {
 				book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
-				if !lnb.persistReviewState(chatID, data, logger) {
+				if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
 					return sent, false
 				}
 				continue
 			}
-			if !reminder.ClaimDelivery(at, reviewDeliveryClaimLease) {
+			advance, wasSent, usable := func() (bool, bool, bool) {
+				deliveryKey := reviewDeliveryKey{chatID: chatID, bookID: strings.ToLower(book.ID), userID: reminderUserID}
+				if !lnb.automatedReviewDeliveryAllowed(deliveryKey, at) {
+					return true, false, true
+				}
+				if !reminder.ClaimDelivery(at, reviewDeliveryClaimLease) {
+					return true, false, true
+				}
+				if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
+					return false, false, false
+				}
+				message, err := lnb.SendHTMLMessage(chatID, renderReviewReminder(book, *reminder), reviewRequestButtonsForUser(book.ID, reminderUserID))
+				if err != nil {
+					logger.WithError(err).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to send review reminder")
+					policy, retryAt := classifyTelegramFailure(err, lnb.reviewFailureTime(at))
+					switch policy {
+					case telegramFailureRetry:
+						rateLimited := isTelegramRateLimit(err)
+						if rateLimited {
+							lnb.rememberAutomatedReviewRetry(deliveryKey, retryAt)
+						}
+						reminder.ReleaseDeliveryClaim()
+						reminder.DueAt = retryAt
+						if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
+							if rateLimited {
+								logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID, "retry_at": retryAt, "retry_not_before_volatile": true}).Error("Reminder RetryAfter is protected only until process restart because durable persistence failed")
+							}
+							return false, false, false
+						}
+						lnb.clearAutomatedReviewRetry(deliveryKey)
+						return true, false, true
+					case telegramFailureTerminal:
+						lnb.clearAutomatedReviewRetry(deliveryKey)
+						book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
+						if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
+							return false, false, false
+						}
+						logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Review reminder was permanently rejected; cancelling reminder")
+						return false, false, true
+					default:
+						logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Warn("Review reminder delivery is ambiguous; keeping claim until lease expires")
+						return true, false, true
+					}
+				}
+				book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
+				lnb.clearAutomatedReviewRetry(deliveryKey)
+				persisted := lnb.persistReviewState(chatID, data, logger)
+				if persisted != persistenceDurable {
+					if persisted == persistenceNotCommitted {
+						if deleteErr := lnb.removeMessage(chatID, message.MessageID); deleteErr != nil {
+							logger.WithError(deleteErr).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to compensate unpersisted review reminder")
+						}
+					} else {
+						logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Review reminder was committed, but directory durability is uncertain; skipping compensation")
+					}
+					return false, false, false
+				}
+				return false, true, true
+			}()
+			if !usable {
+				return sent, false
+			}
+			if wasSent {
+				sent++
+			}
+			if advance {
 				reminderIndex++
-				continue
-			}
-			if !lnb.persistReviewState(chatID, data, logger) {
-				reminder.ReleaseDeliveryClaim()
-				return sent, false
-			}
-			message, err := lnb.SendHTMLMessage(chatID, renderReviewReminder(book, *reminder), reviewRequestButtonsForUser(book.ID, reminderUserID))
-			if err != nil {
-				logger.WithError(err).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to send review reminder")
-				policy, retryAt := classifyTelegramFailure(err, at)
-				switch policy {
-				case telegramFailureRetry:
-					reminder.ReleaseDeliveryClaim()
-					reminder.DueAt = retryAt
-					if !lnb.persistReviewState(chatID, data, logger) {
-						return sent, false
-					}
-					reminderIndex++
-				case telegramFailureTerminal:
-					book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
-					if !lnb.persistReviewState(chatID, data, logger) {
-						return sent, false
-					}
-					logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Review reminder was permanently rejected; cancelling reminder")
-				default:
-					logger.WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Warn("Review reminder delivery is ambiguous; keeping claim until lease expires")
-					reminderIndex++
-				}
-				continue
-			}
-			sent++
-			book.ReviewReminders = append(book.ReviewReminders[:reminderIndex], book.ReviewReminders[reminderIndex+1:]...)
-			if !lnb.persistReviewState(chatID, data, logger) {
-				if deleteErr := lnb.removeMessage(chatID, message.MessageID); deleteErr != nil {
-					logger.WithError(deleteErr).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to compensate unpersisted review reminder")
-				}
-				return sent, false
 			}
 		}
 	}

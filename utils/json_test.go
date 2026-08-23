@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +55,27 @@ func TestWriteJSONEncodingErrorLeavesNoDestination(t *testing.T) {
 	tempFiles, _ := filepath.Glob(filepath.Join(dir, ".chat-data-*.tmp"))
 	if len(tempFiles) != 0 {
 		t.Fatalf("temporary files leaked: %#v", tempFiles)
+	}
+}
+
+func TestWriteJSONReportsPostCommitDurabilityError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "data.json")
+	if err := WriteJSONToFile(path, jsonFixture{Name: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	syncErr := errors.New("directory sync failed")
+	err := writeJSONToFile(path, jsonFixture{Name: "new"}, func(string) error { return syncErr })
+	var durabilityErr *PostCommitDurabilityError
+	if !errors.As(err, &durabilityErr) || !errors.Is(err, syncErr) {
+		t.Fatalf("error = %v, want PostCommitDurabilityError", err)
+	}
+	var got jsonFixture
+	if readErr := ReadJSONFromFile(path, &got); readErr != nil {
+		t.Fatal(readErr)
+	}
+	if got.Name != "new" {
+		t.Fatalf("visible file = %#v, want committed replacement", got)
 	}
 }
 

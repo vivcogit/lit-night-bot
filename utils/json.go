@@ -2,10 +2,29 @@ package utils
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// PostCommitDurabilityError means that the new file is already visible after
+// an atomic rename, but syncing the parent directory could not be confirmed.
+// Callers must not treat this as an ordinary pre-commit write failure.
+type PostCommitDurabilityError struct {
+	Err error
+}
+
+func (err *PostCommitDurabilityError) Error() string {
+	return fmt.Sprintf("файл заменён, но долговечность записи не подтверждена: %v", err.Err)
+}
+
+func (err *PostCommitDurabilityError) Unwrap() error { return err.Err }
+
+func IsPostCommitDurabilityError(err error) bool {
+	var durabilityErr *PostCommitDurabilityError
+	return errors.As(err, &durabilityErr)
+}
 
 func SyncDirectory(path string) error {
 	directory, err := os.Open(path)
@@ -20,6 +39,10 @@ func SyncDirectory(path string) error {
 }
 
 func WriteJSONToFile[T any](filePath string, data T) error {
+	return writeJSONToFile(filePath, data, SyncDirectory)
+}
+
+func writeJSONToFile[T any](filePath string, data T, syncDir func(string) error) error {
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("ошибка при создании каталога: %w", err)
@@ -56,8 +79,8 @@ func WriteJSONToFile[T any](filePath string, data T) error {
 	if err := os.Rename(tempPath, filePath); err != nil {
 		return fmt.Errorf("ошибка атомарной замены файла: %w", err)
 	}
-	if err := SyncDirectory(dir); err != nil {
-		return err
+	if err := syncDir(dir); err != nil {
+		return &PostCommitDurabilityError{Err: err}
 	}
 
 	return nil

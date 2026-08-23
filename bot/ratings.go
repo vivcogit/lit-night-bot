@@ -325,7 +325,7 @@ func (lnb *LitNightBot) setBookRating(update *tgbotapi.Update, bookID string, va
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, err.Error()))
 		return
 	}
-	if err := lnb.iocd.SaveChatData(message.Chat.ID, data); err != nil {
+	if err := lnb.commitChatData(message.Chat.ID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to save rating")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось сохранить оценку"))
 		return
@@ -407,7 +407,7 @@ func (lnb *LitNightBot) confirmRatingDelete(update *tgbotapi.Update, params []st
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Оценка уже удалена"))
 		return
 	}
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to delete rating")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось удалить оценку"))
 		return
@@ -479,7 +479,7 @@ func (lnb *LitNightBot) confirmRatingClose(update *tgbotapi.Update, params []str
 		return
 	}
 	book.ScheduleReviewRequest(now.Add(reviewRequestDelay))
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to close ratings")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось сохранить итог"))
 		return
@@ -521,7 +521,7 @@ func (lnb *LitNightBot) reopenRatings(update *tgbotapi.Update, bookID string, lo
 		return
 	}
 	book.CancelPendingReviewRequest()
-	if err := lnb.iocd.SaveChatData(message.Chat.ID, data); err != nil {
+	if err := lnb.commitChatData(message.Chat.ID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to reopen ratings")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось возобновить сбор оценок"))
 		return

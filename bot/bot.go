@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	chatdata "lit-night-bot/chat-data"
 	io "lit-night-bot/io"
 	"net/http"
 	"sync"
@@ -25,6 +26,13 @@ type LitNightBot struct {
 	locks             sync.Map
 	historySelections sync.Map
 	location          *time.Location
+	reviewStateSaver  func(int64, *chatdata.ChatData) error
+	reviewRetryMu     sync.Mutex
+	// reviewRetryAt is a best-effort fallback when persisting Telegram's
+	// RetryAfter fails. The normal durable source of truth remains chat data;
+	// this map intentionally does not survive a process restart.
+	reviewRetryAt map[reviewDeliveryKey]time.Time
+	reviewNow     func() time.Time
 }
 
 func (lnb *LitNightBot) chatMutex(chatID int64) *sync.Mutex {
@@ -65,7 +73,7 @@ func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isD
 
 	logger.WithField("username", bot.Self.UserName).Info("Bot authorized")
 
-	return &LitNightBot{bot: bot, iocd: iocd, logger: logger, location: location}, nil
+	return &LitNightBot{bot: bot, iocd: iocd, logger: logger, location: location, reviewNow: time.Now}, nil
 }
 
 func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {

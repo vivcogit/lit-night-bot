@@ -8,6 +8,7 @@ import (
 	"io"
 	chatdata "lit-night-bot/chat-data"
 	chatio "lit-night-bot/io"
+	"lit-night-bot/utils"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -87,6 +88,16 @@ func (recorder *telegramRecorder) snapshot() []string {
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
 	return append([]string(nil), recorder.texts...)
+}
+
+func countTextsContaining(texts []string, fragment string) int {
+	count := 0
+	for _, text := range texts {
+		if strings.Contains(text, fragment) {
+			count++
+		}
+	}
+	return count
 }
 
 func newReviewIntegrationBot(t *testing.T) (*LitNightBot, *chatio.IoChatData, *telegramRecorder) {
@@ -308,6 +319,77 @@ func TestTelegramRateLimitDefersRetry(t *testing.T) {
 	}
 }
 
+func TestRateLimitStartsWhenTelegramResponds(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	recorder.failAPI = 1
+	recorder.failCode = 429
+	recorder.retryAfter = 600
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	failedAt := now.Add(reviewRequestDelay)
+	responseAt := failedAt.Add(2 * time.Minute)
+	lnb.reviewNow = func() time.Time { return responseAt }
+	if err := storage.SaveChatData(-42, scheduledReviewData(now)); err != nil {
+		t.Fatal(err)
+	}
+	lnb.ProcessDueReviews(failedAt, lnb.logger)
+	deferred := storage.GetChatData(-42).FindBook("done0001")
+	if deferred.ReviewRequestRetryAt == nil || !deferred.ReviewRequestRetryAt.Equal(responseAt.Add(10*time.Minute)) {
+		t.Fatalf("RetryAfter starts at %#v, want response time %s", deferred.ReviewRequestRetryAt, responseAt)
+	}
+}
+
+func TestRateLimitFallbackIsIsolatedByDelivery(t *testing.T) {
+	lnb, _, _ := newReviewIntegrationBot(t)
+	at := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	requestA := reviewDeliveryKey{chatID: -42, bookID: "book-a"}
+	requestB := reviewDeliveryKey{chatID: -43, bookID: "book-b"}
+	reminderA := reviewDeliveryKey{chatID: -42, bookID: "book-a", userID: 7}
+	lnb.rememberAutomatedReviewRetry(requestA, at.Add(time.Hour))
+	if lnb.automatedReviewDeliveryAllowed(requestA, at) {
+		t.Fatal("rate-limited request was allowed")
+	}
+	if !lnb.automatedReviewDeliveryAllowed(requestB, at) {
+		t.Fatal("independent chat was throttled")
+	}
+	if !lnb.automatedReviewDeliveryAllowed(reminderA, at) {
+		t.Fatal("independent participant reminder was throttled")
+	}
+}
+
+func TestRateLimitFallbackSurvivesRetryStateSaveFailure(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	recorder.failAPI = 1
+	recorder.failCode = 429
+	recorder.retryAfter = 3600
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	if err := storage.SaveChatData(-42, scheduledReviewData(now)); err != nil {
+		t.Fatal(err)
+	}
+	saveCalls := 0
+	lnb.reviewStateSaver = func(chatID int64, data *chatdata.ChatData) error {
+		saveCalls++
+		if saveCalls >= 2 && saveCalls <= 4 {
+			return errors.New("storage temporarily unavailable")
+		}
+		return storage.SaveChatData(chatID, data)
+	}
+	failedAt := now.Add(reviewRequestDelay)
+	lnb.ProcessDueReviews(failedAt, lnb.logger)
+	persisted := storage.GetChatData(-42).FindBook("done0001")
+	if persisted.ReviewRequestClaimedAt == nil || persisted.ReviewRequestRetryAt != nil {
+		t.Fatalf("disk must retain only the pre-send claim: %#v", persisted)
+	}
+	lnb.ProcessDueReviews(failedAt.Add(reviewDeliveryClaimLease), lnb.logger)
+	lnb.ProcessDueReviews(failedAt.Add(59*time.Minute), lnb.logger)
+	if got := countTextsContaining(recorder.snapshot(), "Короткое послесловие"); got != 0 {
+		t.Fatalf("request retried before RetryAfter despite failed persistence: %d", got)
+	}
+	lnb.ProcessDueReviews(failedAt.Add(time.Hour), lnb.logger)
+	if got := countTextsContaining(recorder.snapshot(), "Короткое послесловие"); got != 1 {
+		t.Fatalf("request was not retried at RetryAfter: %d", got)
+	}
+}
+
 func TestPermanentTelegramRejectionCancelsDelivery(t *testing.T) {
 	lnb, storage, recorder := newReviewIntegrationBot(t)
 	recorder.failAPI = 1
@@ -478,6 +560,46 @@ func TestFinalPersistenceFailureAbortsChatSnapshot(t *testing.T) {
 	}
 	if recorder.deletions != 1 {
 		t.Fatalf("compensation deletions = %d, want 1", recorder.deletions)
+	}
+}
+
+func TestPostCommitDurabilityFailureDoesNotDeleteDeliveredRequest(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := scheduledReviewData(now)
+	second := *data.FindBook("done0001")
+	second.ID = "done0002"
+	second.Title = "Вторая"
+	data.Books = append(data.Books, second)
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	saveCalls := 0
+	lnb.reviewStateSaver = func(chatID int64, state *chatdata.ChatData) error {
+		saveCalls++
+		if err := storage.SaveChatData(chatID, state); err != nil {
+			return err
+		}
+		if saveCalls >= 2 {
+			return &utils.PostCommitDurabilityError{Err: errors.New("directory sync failed")}
+		}
+		return nil
+	}
+	lnb.ProcessDueReviews(now.Add(reviewRequestDelay), lnb.logger)
+	saved := storage.GetChatData(-42)
+	first := saved.FindBook("done0001")
+	secondSaved := saved.FindBook("done0002")
+	if first.ReviewRequestSentAt == nil {
+		t.Fatalf("committed request lost sent marker: %#v", first)
+	}
+	if secondSaved.ReviewRequestSentAt != nil || secondSaved.ReviewRequestClaimedAt != nil {
+		t.Fatalf("processor continued after uncertain durability: %#v", secondSaved)
+	}
+	if recorder.deletions != 0 {
+		t.Fatalf("committed Telegram request was compensated with %d deletions", recorder.deletions)
+	}
+	if got := countTextsContaining(recorder.snapshot(), "Короткое послесловие"); got != 1 {
+		t.Fatalf("unexpected review request count: %d", got)
 	}
 }
 

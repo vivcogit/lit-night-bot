@@ -67,7 +67,7 @@ func (lnb *LitNightBot) handleCurrentDeadline(update *tgbotapi.Update, logger *l
 		return
 	}
 	current.Deadline = &date
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to save deadline")
 		lnb.SendPlainMessage(chatID, "Не удалось сохранить дедлайн. Попробуйте ещё раз.")
 		return
@@ -136,7 +136,7 @@ func (lnb *LitNightBot) finishCurrentBookWithReason(chatID int64, messageID int,
 		lnb.editMessage(chatID, messageID, "Эта кнопка устарела: текущая книга уже изменилась.", nil)
 		return false
 	}
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to save final book status")
 		lnb.editMessage(chatID, messageID, "Не удалось сохранить новый статус книги. Попробуйте ещё раз.", nil)
 		return false

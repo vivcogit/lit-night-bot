@@ -5,6 +5,8 @@ import (
 	"fmt"
 	chatdata "lit-night-bot/chat-data"
 	chatio "lit-night-bot/io"
+	"lit-night-bot/utils"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -102,15 +104,30 @@ func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64
 		if err != nil {
 			return fmt.Errorf("чат %d: резервная копия: %w", candidate.chatID, err)
 		}
+		var durabilityErr error
 		if err := storage.SaveChatData(candidate.chatID, candidate.migrated); err != nil {
-			return fmt.Errorf("чат %d: запись v%d: %w", candidate.chatID, chatdata.CurrentSchemaVersion, err)
+			if !utils.IsPostCommitDurabilityError(err) {
+				return fmt.Errorf("чат %d: запись v%d: %w", candidate.chatID, chatdata.CurrentSchemaVersion, err)
+			}
+			fmt.Printf("⚠️ Чат %d: v%d записана, но долговечность каталога не подтверждена; повторяю синхронизацию и проверяю видимый файл.\n", candidate.chatID, chatdata.CurrentSchemaVersion)
+			durabilityErr = utils.SyncDirectory(filepath.Dir(storage.GetChatDataFilePath(candidate.chatID)))
 		}
 		saved := storage.GetChatData(candidate.chatID)
 		if saved == nil || saved.ValidateV2() != nil || len(saved.Books) != candidate.result.TotalBookCount {
 			if restoreErr := storage.RestoreChatData(candidate.chatID, backupPath); restoreErr != nil {
+				if utils.IsPostCommitDurabilityError(restoreErr) {
+					if syncErr := utils.SyncDirectory(filepath.Dir(storage.GetChatDataFilePath(candidate.chatID))); syncErr == nil {
+						return fmt.Errorf("чат %d: v%d не прошёл проверку, откат выполнен после повторной синхронизации", candidate.chatID, chatdata.CurrentSchemaVersion)
+					} else {
+						return fmt.Errorf("чат %d: откат видим, но его долговечность не подтверждена: %w", candidate.chatID, syncErr)
+					}
+				}
 				return fmt.Errorf("чат %d: проверка v%d и откат не удались: %v", candidate.chatID, chatdata.CurrentSchemaVersion, restoreErr)
 			}
 			return fmt.Errorf("чат %d: v%d не прошёл проверку, выполнен откат", candidate.chatID, chatdata.CurrentSchemaVersion)
+		}
+		if durabilityErr != nil {
+			return fmt.Errorf("чат %d: v%d записана и проверена, но долговечность каталога не подтверждена; дальнейшие чаты не изменялись: %w", candidate.chatID, chatdata.CurrentSchemaVersion, durabilityErr)
 		}
 		fmt.Printf("✅ Чат %d: мигрирован, копия %s\n", candidate.chatID, backupPath)
 	}

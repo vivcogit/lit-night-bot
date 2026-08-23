@@ -3,6 +3,7 @@ package bot
 import (
 	"errors"
 	chatdata "lit-night-bot/chat-data"
+	"lit-night-bot/utils"
 	"os"
 	"strings"
 
@@ -17,12 +18,21 @@ const dataStorageErrorText = "⚠️ Не удалось сохранить да
 const dataReadErrorText = "⚠️ Данные чата временно недоступны. Файл не был изменён; обратитесь к администратору."
 
 func (lnb *LitNightBot) saveChatData(chatID int64, data *chatdata.ChatData, logger *logrus.Entry) bool {
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to save chat data")
 		lnb.SendPlainMessage(chatID, dataStorageErrorText)
 		return false
 	}
 	return true
+}
+
+func (lnb *LitNightBot) commitChatData(chatID int64, data *chatdata.ChatData, logger *logrus.Entry) error {
+	err := lnb.iocd.SaveChatData(chatID, data)
+	if utils.IsPostCommitDurabilityError(err) {
+		logger.WithError(err).Error("Chat data was committed, but directory durability is uncertain")
+		return nil
+	}
+	return err
 }
 
 func telegramChatMetadata(chat *tgbotapi.Chat) *chatdata.ChatMetadata {

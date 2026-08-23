@@ -75,6 +75,10 @@ func (iocd *IoChatData) GetOrCreateChatData(chatId int64) *chatdata.ChatData {
 	}
 	data = chatdata.NewChatData()
 	if err := iocd.SaveChatData(chatId, data); err != nil {
+		if utils.IsPostCommitDurabilityError(err) {
+			iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Created chat data is visible, but directory durability is uncertain")
+			return data
+		}
 		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to create chat data")
 		return nil
 	}
