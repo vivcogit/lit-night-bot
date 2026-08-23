@@ -259,6 +259,13 @@ func TestCurrentCompletionStatusButtons(t *testing.T) {
 	}
 }
 
+func TestPersonalCompletionUsesReadLabel(t *testing.T) {
+	buttons := currentCompletionButtonsForChat("book0001", true)
+	if buttons[0][0].Text != "✅ Прочитано" {
+		t.Fatalf("personal completion label = %q", buttons[0][0].Text)
+	}
+}
+
 func TestUnfinishedCardHasStatusButNoRatingControls(t *testing.T) {
 	ended := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
 	book := &chatdata.ClubBook{ID: "book0001", Title: "Брошенная книга", Status: chatdata.StatusUnfinished, StoppedAt: &ended}

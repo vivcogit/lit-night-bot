@@ -146,7 +146,7 @@ func reviewRequestButtonsForUser(bookID string, userID int64) [][]tgbotapi.Inlin
 	}
 	return [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, params...))),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра", GetCallbackParamStr(CBReviewRemind, params...))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, params...))),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Не буду писать", GetCallbackParamStr(CBReviewSkip, params...))),
 	}
 }
@@ -164,7 +164,14 @@ func (lnb *LitNightBot) reviewCallbackUserAllowed(update *tgbotapi.Update, param
 }
 
 func reviewReplyConfig(chatID int64, book *chatdata.ClubBook, user *tgbotapi.User) tgbotapi.MessageConfig {
+	return reviewReplyConfigForChat(chatID, book, user, false)
+}
+
+func reviewReplyConfigForChat(chatID int64, book *chatdata.ClubBook, user *tgbotapi.User, private bool) tgbotapi.MessageConfig {
 	action := "Напишите отзыв одним сообщением. Необязательно отвечать на все вопросы — достаточно нескольких предложений."
+	if private {
+		action += "\n\nМожно опираться на вопросы:\n— Что больше всего осталось с вами после чтения?\n— За что вы поставили такую оценку?\n— Кому вы посоветуете или не посоветуете эту книгу?"
+	}
 	if user != nil && book.ReviewByUser(user.ID) != nil {
 		action = "Отправьте новый текст отзыва одним сообщением. Он заменит сохранённый отзыв."
 	}
@@ -217,12 +224,19 @@ func (lnb *LitNightBot) requestReview(update *tgbotapi.Update, bookID string, lo
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Боты не могут оставлять отзывы"))
 		return
 	}
-	book := lnb.iocd.GetOrCreateChatData(message.Chat.ID).FindBook(bookID)
+	data := lnb.iocd.GetOrCreateChatData(message.Chat.ID)
+	book := data.FindBook(bookID)
+	if book != nil && message.Chat.IsPrivate() && book.OpenReviewCollection(time.Now()) {
+		if !lnb.saveChatData(message.Chat.ID, data, logger) {
+			lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось открыть ввод отзыва"))
+			return
+		}
+	}
 	if book == nil || !book.ReviewCollectionOpen() {
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Сбор отзывов для этой книги не открыт"))
 		return
 	}
-	request := reviewReplyConfig(message.Chat.ID, book, user)
+	request := reviewReplyConfigForChat(message.Chat.ID, book, user, message.Chat.IsPrivate())
 	if _, err := lnb.bot.Send(request); err != nil {
 		logger.WithError(err).Error("Failed to request review")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось открыть ввод отзыва"))
@@ -277,6 +291,9 @@ func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID s
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Книга не найдена"))
 		return
 	}
+	if message.Chat.IsPrivate() {
+		book.OpenReviewCollection(time.Now())
+	}
 	dueAt := time.Now().Add(reviewReminderDelay)
 	if err := book.SetReviewReminder(user.ID, telegramDisplayName(user), user.UserName, dueAt); err != nil {
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, err.Error()))
@@ -286,7 +303,11 @@ func (lnb *LitNightBot) scheduleReviewReminder(update *tgbotapi.Update, bookID s
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось сохранить напоминание"))
 		return
 	}
-	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Напомню завтра в этом чате"))
+	answer := "Напомню завтра в этом чате"
+	if message.Chat.IsPrivate() {
+		answer = "Напомню завтра об отзыве"
+	}
+	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, answer))
 }
 
 func (lnb *LitNightBot) skipReview(update *tgbotapi.Update, bookID string, logger *logrus.Entry) {
@@ -372,10 +393,38 @@ func reviewListButtons(bookID string, page int, lastPage int) [][]tgbotapi.Inlin
 	return buttons
 }
 
+func renderPersonalReview(book *chatdata.ClubBook, userID int64) string {
+	var text strings.Builder
+	text.WriteString("💬 <b>Мой отзыв</b>\n")
+	text.WriteString("«" + html.EscapeString(reviewBookName(book)) + "»\n\n")
+	review := book.ReviewByUser(userID)
+	if review == nil {
+		text.WriteString("Отзыв пока не написан.")
+		return text.String()
+	}
+	text.WriteString(html.EscapeString(truncateUTF16(review.Text, chatdata.MaxReviewTextUTF16Units)))
+	return text.String()
+}
+
 func (lnb *LitNightBot) showReviews(message *tgbotapi.Message, bookID string, page int) error {
 	book := lnb.iocd.GetOrCreateChatData(message.Chat.ID).FindBook(bookID)
 	if book == nil {
 		_, err := lnb.editMessage(message.Chat.ID, message.MessageID, "Книга не найдена.", nil)
+		return err
+	}
+	if message.Chat.IsPrivate() {
+		buttons := reviewManageButtons(book.ID, message.Chat.ID)
+		if book.ReviewByUser(message.Chat.ID) == nil {
+			buttons = [][]tgbotapi.InlineKeyboardButton{
+				tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID))),
+				tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID))),
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("← К карточке", GetCallbackParamStr(CBReviewBackToBook, book.ID)),
+					tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
+				),
+			}
+		}
+		_, err := lnb.editHTMLMessage(message.Chat.ID, message.MessageID, renderPersonalReview(book, message.Chat.ID), buttons)
 		return err
 	}
 	text, page, lastPage := renderReviewsPage(book, page)
@@ -492,7 +541,15 @@ func (lnb *LitNightBot) sendPendingReviewRequests(chatID int64, data *chatdata.C
 }
 
 func renderReviewReminder(book *chatdata.ClubBook, reminder chatdata.ReviewReminder) string {
-	return telegramMentionHTML(reminder.UserID, reminder.DisplayName) + ", напоминаю об отзыве о книге «" + html.EscapeString(reviewBookName(book)) + "». Хотите написать его сейчас?"
+	return renderReviewReminderForChat(book, reminder, false)
+}
+
+func renderReviewReminderForChat(book *chatdata.ClubBook, reminder chatdata.ReviewReminder, private bool) string {
+	prefix := telegramMentionHTML(reminder.UserID, reminder.DisplayName) + ", напоминаю"
+	if private {
+		prefix = "Напоминаю"
+	}
+	return prefix + " об отзыве о книге «" + html.EscapeString(reviewBookName(book)) + "». Хотите написать его сейчас?"
 }
 
 func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.ChatData, at time.Time, logger *logrus.Entry) (int, bool) {
@@ -524,7 +581,12 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 				if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
 					return false, false, false
 				}
-				message, err := lnb.SendHTMLMessage(chatID, renderReviewReminder(book, *reminder), reviewRequestButtonsForUser(book.ID, reminderUserID))
+				private := data.IsPrivateChat(chatID)
+				buttons := reviewRequestButtonsForUser(book.ID, reminderUserID)
+				if private {
+					buttons = reviewRequestButtons(book.ID)
+				}
+				message, err := lnb.SendHTMLMessage(chatID, renderReviewReminderForChat(book, *reminder, private), buttons)
 				if err != nil {
 					logger.WithError(err).WithFields(logrus.Fields{"book_id": book.ID, "user_id": reminderUserID}).Error("Failed to send review reminder")
 					policy, retryAt := classifyTelegramFailure(err, lnb.reviewFailureTime(at))

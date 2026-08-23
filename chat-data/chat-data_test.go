@@ -443,6 +443,24 @@ func TestReviewRetryNotBeforeCannotBeBypassed(t *testing.T) {
 	}
 }
 
+func TestPersonalReviewCollectionCanOpenWithoutRatingClosure(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	book := ClubBook{ID: "book0001", Title: "Книга", Status: StatusCompleted}
+	if !book.OpenReviewCollection(now) || !book.ReviewCollectionOpen() {
+		t.Fatalf("review collection was not opened: %#v", book)
+	}
+	data := NewChatData()
+	data.Chat = &ChatMetadata{ID: 42, Type: "private"}
+	data.Books = []ClubBook{book}
+	if err := data.ValidateV2(); err != nil {
+		t.Fatalf("personal review collection is invalid: %v", err)
+	}
+	data.Books[0].Status = StatusReading
+	if err := data.ValidateV2(); err == nil {
+		t.Fatal("non-completed book kept an open review collection")
+	}
+}
+
 func TestFinishUnfinishedBookStoresStructuredReason(t *testing.T) {
 	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
 	data := NewChatData()

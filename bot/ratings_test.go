@@ -71,15 +71,21 @@ func TestPersonalDiaryRatingPanelHidesClubData(t *testing.T) {
 		}
 	}
 	buttons := ratingPanelButtonsForChat(book, true)
-	if len(buttons) != 4 {
-		t.Fatalf("personal button rows = %d, want 4", len(buttons))
+	if len(buttons) != 6 {
+		t.Fatalf("personal button rows = %d, want 6", len(buttons))
 	}
+	foundReview, foundReminder := false, false
 	for _, row := range buttons {
 		for _, button := range row {
 			if strings.Contains(button.Text, "Кто как") || strings.Contains(button.Text, "Завершить сбор") {
 				t.Fatalf("club action leaked into personal diary: %q", button.Text)
 			}
+			foundReview = foundReview || button.Text == "✍️ Написать отзыв"
+			foundReminder = foundReminder || button.Text == "⏰ Напомнить завтра об отзыве"
 		}
+	}
+	if !foundReview || !foundReminder {
+		t.Fatalf("personal review actions are missing: %#v", buttons)
 	}
 }
 

@@ -261,30 +261,31 @@ type ChatMetadata struct {
 }
 
 type ClubBook struct {
-	ID                     string             `json:"id"`
-	Title                  string             `json:"title"`
-	Authors                []string           `json:"authors"`
-	LegacyName             string             `json:"legacy_name,omitempty"`
-	NeedsReview            bool               `json:"needs_review,omitempty"`
-	Status                 BookStatus         `json:"status"`
-	AddedAt                time.Time          `json:"added_at"`
-	StartedAt              *time.Time         `json:"started_at,omitempty"`
-	CompletedAt            *time.Time         `json:"completed_at,omitempty"`
-	StoppedAt              *time.Time         `json:"stopped_at,omitempty"`
-	UnfinishedReason       *UnfinishedReason  `json:"unfinished_reason,omitempty"`
-	Deadline               *time.Time         `json:"deadline,omitempty"`
-	Ratings                []Rating           `json:"ratings"`
-	RatingsClosedAt        *time.Time         `json:"ratings_closed_at,omitempty"`
-	RatingsClosedBy        int64              `json:"ratings_closed_by,omitempty"`
-	RatingsClosedByName    string             `json:"ratings_closed_by_name,omitempty"`
-	Reviews                []Review           `json:"reviews"`
-	ReviewRequestDueAt     *time.Time         `json:"review_request_due_at,omitempty"`
-	ReviewRequestRetryAt   *time.Time         `json:"review_request_retry_not_before,omitempty"`
-	ReviewRequestClaimedAt *time.Time         `json:"review_request_claimed_at,omitempty"`
-	ReviewRequestSentAt    *time.Time         `json:"review_request_sent_at,omitempty"`
-	ReviewRequestMsgID     int                `json:"review_request_message_id,omitempty"`
-	ReviewReminders        []ReviewReminder   `json:"review_reminders,omitempty"`
-	DiscussionSummary      *DiscussionSummary `json:"discussion_summary,omitempty"`
+	ID                       string             `json:"id"`
+	Title                    string             `json:"title"`
+	Authors                  []string           `json:"authors"`
+	LegacyName               string             `json:"legacy_name,omitempty"`
+	NeedsReview              bool               `json:"needs_review,omitempty"`
+	Status                   BookStatus         `json:"status"`
+	AddedAt                  time.Time          `json:"added_at"`
+	StartedAt                *time.Time         `json:"started_at,omitempty"`
+	CompletedAt              *time.Time         `json:"completed_at,omitempty"`
+	StoppedAt                *time.Time         `json:"stopped_at,omitempty"`
+	UnfinishedReason         *UnfinishedReason  `json:"unfinished_reason,omitempty"`
+	Deadline                 *time.Time         `json:"deadline,omitempty"`
+	Ratings                  []Rating           `json:"ratings"`
+	RatingsClosedAt          *time.Time         `json:"ratings_closed_at,omitempty"`
+	RatingsClosedBy          int64              `json:"ratings_closed_by,omitempty"`
+	RatingsClosedByName      string             `json:"ratings_closed_by_name,omitempty"`
+	Reviews                  []Review           `json:"reviews"`
+	ReviewRequestDueAt       *time.Time         `json:"review_request_due_at,omitempty"`
+	ReviewRequestRetryAt     *time.Time         `json:"review_request_retry_not_before,omitempty"`
+	ReviewRequestClaimedAt   *time.Time         `json:"review_request_claimed_at,omitempty"`
+	ReviewRequestSentAt      *time.Time         `json:"review_request_sent_at,omitempty"`
+	ReviewRequestMsgID       int                `json:"review_request_message_id,omitempty"`
+	ReviewCollectionOpenedAt *time.Time         `json:"review_collection_opened_at,omitempty"`
+	ReviewReminders          []ReviewReminder   `json:"review_reminders,omitempty"`
+	DiscussionSummary        *DiscussionSummary `json:"discussion_summary,omitempty"`
 }
 
 func (book *ClubBook) ReviewByUser(userID int64) *Review {
@@ -394,7 +395,15 @@ func (book *ClubBook) MarkReviewRequestSent(at time.Time, messageID int) {
 }
 
 func (book *ClubBook) ReviewCollectionOpen() bool {
-	return book != nil && book.Status == StatusCompleted && (book.ReviewRequestDueAt != nil || book.ReviewRequestClaimedAt != nil || book.ReviewRequestSentAt != nil)
+	return book != nil && book.Status == StatusCompleted && (book.ReviewCollectionOpenedAt != nil || book.ReviewRequestDueAt != nil || book.ReviewRequestClaimedAt != nil || book.ReviewRequestSentAt != nil)
+}
+
+func (book *ClubBook) OpenReviewCollection(at time.Time) bool {
+	if book == nil || book.Status != StatusCompleted || book.ReviewCollectionOpenedAt != nil {
+		return false
+	}
+	book.ReviewCollectionOpenedAt = &at
+	return true
 }
 
 func (book *ClubBook) SetReviewReminder(userID int64, displayName string, username string, dueAt time.Time) error {
@@ -870,6 +879,9 @@ func (cd *ChatData) ValidateV2() error {
 		}
 		if book.ReviewRequestSentAt != nil && book.Status != StatusCompleted {
 			return fmt.Errorf("книга %q содержит запрос отзывов без завершённого чтения", book.ID)
+		}
+		if book.ReviewCollectionOpenedAt != nil && book.Status != StatusCompleted {
+			return fmt.Errorf("книга %q содержит открытый сбор отзывов без завершённого чтения", book.ID)
 		}
 		reviewUsers := make(map[int64]struct{}, len(book.Reviews))
 		for _, review := range book.Reviews {

@@ -30,7 +30,7 @@ func TestReviewRequestContainsPromptsAndActions(t *testing.T) {
 		}
 	}
 	buttons := reviewRequestButtons(book.ID)
-	if len(buttons) != 3 || buttons[0][0].Text != "✍️ Написать отзыв" || buttons[1][0].Text != "⏰ Напомнить завтра" {
+	if len(buttons) != 3 || buttons[0][0].Text != "✍️ Написать отзыв" || buttons[1][0].Text != "⏰ Напомнить завтра об отзыве" {
 		t.Fatalf("unexpected review buttons: %#v", buttons)
 	}
 }
@@ -48,6 +48,16 @@ func TestReviewReplyPromptIsSelectiveAndBoundToUser(t *testing.T) {
 	}
 }
 
+func TestPersonalReviewPromptUsesReadingQuestions(t *testing.T) {
+	user := &tgbotapi.User{ID: 77, FirstName: "Анна"}
+	config := reviewReplyConfigForChat(77, reviewTestBook(), user, true)
+	for _, fragment := range []string{"после чтения", "За что вы поставили", "Кому вы посоветуете"} {
+		if !strings.Contains(config.Text, fragment) {
+			t.Fatalf("personal review prompt misses %q: %s", fragment, config.Text)
+		}
+	}
+}
+
 func TestReviewReminderMentionsParticipantInGroup(t *testing.T) {
 	book := reviewTestBook()
 	reminder := chatdata.ReviewReminder{UserID: 55, DisplayName: "Борис & Co"}
@@ -59,6 +69,55 @@ func TestReviewReminderMentionsParticipantInGroup(t *testing.T) {
 	action, params, err := GetCallbackParam(*buttons[0][0].CallbackData)
 	if err != nil || action != CBReviewWrite || len(params) != 2 || params[1] != "55" {
 		t.Fatalf("reminder action is not bound to participant: %q %#v %v", action, params, err)
+	}
+}
+
+func TestPersonalReviewReminderDoesNotMentionUser(t *testing.T) {
+	book := reviewTestBook()
+	reminder := chatdata.ReviewReminder{UserID: 55, DisplayName: "Борис"}
+	text := renderReviewReminderForChat(book, reminder, true)
+	if strings.Contains(text, "tg://user") || !strings.HasPrefix(text, "Напоминаю об отзыве") {
+		t.Fatalf("unexpected personal reminder: %s", text)
+	}
+}
+
+func TestPersonalRatingPanelCombinesRatingAndReview(t *testing.T) {
+	book := reviewTestBook()
+	book.Reviews = nil
+	text := renderPersonalRatingPanel(book, true, 55)
+	if !strings.Contains(text, "Моя оценка") || !strings.Contains(text, "Мой отзыв") {
+		t.Fatalf("personal completion panel is incomplete: %s", text)
+	}
+	buttons := personalRatingPanelButtons(book)
+	var labels []string
+	for _, row := range buttons {
+		for _, button := range row {
+			labels = append(labels, button.Text)
+		}
+	}
+	joined := strings.Join(labels, "|")
+	if !strings.Contains(joined, "✍️ Написать отзыв") || !strings.Contains(joined, "⏰ Напомнить завтра об отзыве") {
+		t.Fatalf("personal review actions are missing: %s", joined)
+	}
+}
+
+func TestCompletingPersonalBookOpensReviewWithoutDelayedRequest(t *testing.T) {
+	lnb, storage, _ := newReviewIntegrationBot(t)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: 42, Type: "private", Title: "Личный дневник"}
+	data.Books = []chatdata.ClubBook{{ID: "book0001", Title: "Книга", Status: chatdata.StatusReading}}
+	if err := storage.SaveChatData(42, data); err != nil {
+		t.Fatal(err)
+	}
+	if !lnb.finishCurrentBookWithReason(42, 10, "book0001", chatdata.StatusCompleted, nil, lnb.logger) {
+		t.Fatal("personal book was not completed")
+	}
+	book := storage.GetChatData(42).FindBook("book0001")
+	if !book.ReviewCollectionOpen() || book.ReviewCollectionOpenedAt == nil {
+		t.Fatalf("personal review collection was not opened: %#v", book)
+	}
+	if book.ReviewRequestDueAt != nil || book.ReviewRequestSentAt != nil {
+		t.Fatalf("personal chat scheduled a delayed group request: %#v", book)
 	}
 }
 

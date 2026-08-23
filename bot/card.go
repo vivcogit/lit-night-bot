@@ -74,7 +74,15 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 		text.WriteString("🏁 Сбор оценок завершён\n")
 	}
 	if book.Status == chatdata.StatusCompleted {
-		text.WriteString(fmt.Sprintf("💬 Отзывов: %d\n", len(book.Reviews)))
+		if private {
+			if book.ReviewByUser(userID) != nil {
+				text.WriteString("💬 Мой отзыв: написан\n")
+			} else {
+				text.WriteString("💬 Мой отзыв пока не написан\n")
+			}
+		} else {
+			text.WriteString(fmt.Sprintf("💬 Отзывов: %d\n", len(book.Reviews)))
+		}
 	}
 	if book.NeedsReview {
 		text.WriteString("\n⚠️ <b>Карточка создана миграцией и требует проверки.</b>\n")
@@ -107,9 +115,22 @@ func bookCardButtonsForChat(book *chatdata.ClubBook, private bool, userID int64)
 			ratingRow = append(ratingRow, tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("👥 Оценки (%d)", len(book.Ratings)), GetCallbackParamStr(CBRatingList, book.ID, "0")))
 		}
 		buttons = append(buttons, ratingRow)
-		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("💬 Отзывы (%d)", len(book.Reviews)), GetCallbackParamStr(CBReviewList, book.ID, "0")),
-		))
+		if private {
+			if book.ReviewByUser(userID) != nil {
+				buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("💬 Мой отзыв", GetCallbackParamStr(CBReviewList, book.ID, "0")),
+				))
+			} else {
+				buttons = append(buttons,
+					tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID))),
+					tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID))),
+				)
+			}
+		} else {
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("💬 Отзывы (%d)", len(book.Reviews)), GetCallbackParamStr(CBReviewList, book.ID, "0")),
+			))
+		}
 	}
 	buttons = append(buttons,
 		tgbotapi.NewInlineKeyboardRow(

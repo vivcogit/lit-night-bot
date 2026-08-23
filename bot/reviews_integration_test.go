@@ -458,6 +458,30 @@ func TestParticipantReminderDoesNotAffectAnotherReview(t *testing.T) {
 	}
 }
 
+func TestPersonalReminderIsDeliveredWithoutMention(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	openedAt := now.Add(-time.Hour)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: 42, Type: "private", Title: "Личный дневник"}
+	data.Books = []chatdata.ClubBook{{
+		ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted,
+		ReviewCollectionOpenedAt: &openedAt,
+		ReviewReminders:          []chatdata.ReviewReminder{{UserID: 42, DisplayName: "Анна", DueAt: now}},
+	}}
+	if err := storage.SaveChatData(42, data); err != nil {
+		t.Fatal(err)
+	}
+	lnb.ProcessDueReviews(now, lnb.logger)
+	texts := recorder.snapshot()
+	if len(texts) != 1 || !strings.HasPrefix(texts[0], "Напоминаю об отзыве") || strings.Contains(texts[0], "tg://user") {
+		t.Fatalf("unexpected personal reminder: %#v", texts)
+	}
+	if reminders := storage.GetChatData(42).FindBook("done0001").ReviewReminders; len(reminders) != 0 {
+		t.Fatalf("personal reminder was not finalized: %#v", reminders)
+	}
+}
+
 func TestCurrentSchemaWithRollbackGuardIsAcceptedAndFutureSchemaRejected(t *testing.T) {
 	lnb, storage, recorder := newReviewIntegrationBot(t)
 	current := chatdata.NewChatData()

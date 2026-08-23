@@ -87,13 +87,21 @@ func (lnb *LitNightBot) handleCurrentComplete(update *tgbotapi.Update, logger *l
 	}
 	lnb.sendMessage(chatID, SendMessageParams{
 		Text:    fmt.Sprintf("Как завершили чтение «%s»?", current.DisplayName()),
-		Buttons: currentCompletionButtons(current.ID),
+		Buttons: currentCompletionButtonsForChat(current.ID, update.FromChat().IsPrivate()),
 	})
 }
 
 func currentCompletionButtons(bookID string) [][]tgbotapi.InlineKeyboardButton {
+	return currentCompletionButtonsForChat(bookID, false)
+}
+
+func currentCompletionButtonsForChat(bookID string, private bool) [][]tgbotapi.InlineKeyboardButton {
+	completedText := "✅ Обсудили"
+	if private {
+		completedText = "✅ Прочитано"
+	}
 	return [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✅ Обсудили", GetCallbackParamStr(CBCurrentMarkCompleted, bookID))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(completedText, GetCallbackParamStr(CBCurrentMarkCompleted, bookID))),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🚫 Не дочитали / бросили", GetCallbackParamStr(CBCurrentMarkUnfinished, bookID))),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBCancel))),
 	}
@@ -130,11 +138,15 @@ func (lnb *LitNightBot) finishCurrentBook(chatID int64, messageID int, expectedI
 
 func (lnb *LitNightBot) finishCurrentBookWithReason(chatID int64, messageID int, expectedID string, status chatdata.BookStatus, reason *chatdata.UnfinishedReason, logger *logrus.Entry) bool {
 	data := lnb.iocd.GetOrCreateChatData(chatID)
-	book, err := data.FinishCurrentBookWithReason(expectedID, status, reason, time.Now())
+	finishedAt := time.Now()
+	book, err := data.FinishCurrentBookWithReason(expectedID, status, reason, finishedAt)
 	if err != nil {
 		logger.WithError(err).Warn("Failed to finish current book")
 		lnb.editMessage(chatID, messageID, "Эта кнопка устарела: текущая книга уже изменилась.", nil)
 		return false
+	}
+	if status == chatdata.StatusCompleted && data.IsPrivateChat(chatID) {
+		book.OpenReviewCollection(finishedAt)
 	}
 	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to save final book status")

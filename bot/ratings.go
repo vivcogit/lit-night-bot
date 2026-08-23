@@ -101,9 +101,14 @@ func renderPersonalRatingPanel(book *chatdata.ClubBook, justCompleted bool, user
 		text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
 	}
 	if rating := book.RatingByUser(userID); rating != nil {
-		text.WriteString(fmt.Sprintf("⭐ Моя оценка: <b>%d из 10</b>", rating.Value))
+		text.WriteString(fmt.Sprintf("⭐ Моя оценка: <b>%d из 10</b>\n", rating.Value))
 	} else {
-		text.WriteString("⭐ Моя оценка: <i>пока не поставлена</i>\n\nКак вам книга?")
+		text.WriteString("⭐ Моя оценка: <i>пока не поставлена</i>\n")
+	}
+	if book.ReviewByUser(userID) != nil {
+		text.WriteString("💬 Мой отзыв: <b>написан</b>")
+	} else {
+		text.WriteString("💬 Мой отзыв: <i>пока не написан</i>\n\nКак вам книга?")
 	}
 	return text.String()
 }
@@ -167,15 +172,28 @@ func personalRatingPanelButtons(book *chatdata.ClubBook) [][]tgbotapi.InlineKeyb
 			secondRow = append(secondRow, button)
 		}
 	}
-	return [][]tgbotapi.InlineKeyboardButton{
+	buttons := [][]tgbotapi.InlineKeyboardButton{
 		firstRow,
 		secondRow,
+	}
+	if len(book.Reviews) > 0 {
+		buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💬 Мой отзыв", GetCallbackParamStr(CBReviewList, book.ID, "0")),
+		))
+	} else {
+		buttons = append(buttons,
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID))),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID))),
+		)
+	}
+	buttons = append(buttons,
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить мою оценку", GetCallbackParamStr(CBRatingDeleteRequest, book.ID))),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("← К карточке", GetCallbackParamStr(CBRatingBackToBook, book.ID)),
 			tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
 		),
-	}
+	)
+	return buttons
 }
 
 func ratingResultButtons(book *chatdata.ClubBook) [][]tgbotapi.InlineKeyboardButton {
