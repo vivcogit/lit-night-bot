@@ -22,14 +22,15 @@ import (
 )
 
 type telegramRecorder struct {
-	mu          sync.Mutex
-	texts       []string
-	failSends   int
-	failAPI     int
-	failCode    int
-	retryAfter  int
-	deletions   int
-	onFirstSend func()
+	mu             sync.Mutex
+	texts          []string
+	failSends      int
+	failAPI        int
+	failCode       int
+	retryAfter     int
+	deletions      int
+	editMessageIDs []string
+	onFirstSend    func()
 }
 
 func (recorder *telegramRecorder) Do(request *http.Request) (*http.Response, error) {
@@ -46,6 +47,9 @@ func (recorder *telegramRecorder) Do(request *http.Request) (*http.Response, err
 	}
 	text := request.FormValue("text")
 	recorder.mu.Lock()
+	if strings.HasSuffix(request.URL.Path, "/editMessageText") {
+		recorder.editMessageIDs = append(recorder.editMessageIDs, request.FormValue("message_id"))
+	}
 	if recorder.failSends > 0 {
 		recorder.failSends--
 		recorder.mu.Unlock()
@@ -88,6 +92,12 @@ func (recorder *telegramRecorder) snapshot() []string {
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
 	return append([]string(nil), recorder.texts...)
+}
+
+func (recorder *telegramRecorder) editIDsSnapshot() []string {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return append([]string(nil), recorder.editMessageIDs...)
 }
 
 func countTextsContaining(texts []string, fragment string) int {
@@ -479,6 +489,37 @@ func TestPersonalReminderIsDeliveredWithoutMention(t *testing.T) {
 	}
 	if reminders := storage.GetChatData(42).FindBook("done0001").ReviewReminders; len(reminders) != 0 {
 		t.Fatalf("personal reminder was not finalized: %#v", reminders)
+	}
+}
+
+func TestPersonalReviewEditsSourcePanelInsteadOfSendingResult(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: 42, Type: "private", Title: "Личный дневник"}
+	data.Books = []chatdata.ClubBook{{
+		ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted,
+		ReviewCollectionOpenedAt: &now,
+		Ratings:                  []chatdata.Rating{{UserID: 42, DisplayName: "Анна", Value: 8, CreatedAt: now, UpdatedAt: now}},
+	}}
+	if err := storage.SaveChatData(42, data); err != nil {
+		t.Fatal(err)
+	}
+	user := &tgbotapi.User{ID: 42, FirstName: "Анна"}
+	original := reviewReplyConfigForChat(42, data.FindBook("done0001"), user, true, 99).Text
+	message := &tgbotapi.Message{
+		MessageID: 101, Chat: &tgbotapi.Chat{ID: 42, Type: "private"}, From: user, Text: "Хорошая книга",
+		ReplyToMessage: &tgbotapi.Message{MessageID: 100, Text: original},
+	}
+	if !lnb.handleReviewReply(message, original, lnb.logger) {
+		t.Fatal("personal review reply was not handled")
+	}
+	if edits := recorder.editIDsSnapshot(); len(edits) != 1 || edits[0] != "99" {
+		t.Fatalf("source panel was not edited: %#v", edits)
+	}
+	texts := recorder.snapshot()
+	if len(texts) != 1 || !strings.Contains(texts[0], "Отзыв добавлен") {
+		t.Fatalf("unexpected result messages: %#v", texts)
 	}
 }
 
