@@ -161,8 +161,11 @@ func (iocd *IoChatData) GetDatasList() ([]string, error) {
 }
 
 func NewIOChatData(logger *logrus.Entry, dataPath string) *IoChatData {
-	if err := os.MkdirAll(dataPath, 0o755); err != nil {
+	if err := os.MkdirAll(dataPath, 0o700); err != nil {
 		logger.WithError(err).Fatal("Failed to create data directory")
+	}
+	if err := os.Chmod(dataPath, 0o700); err != nil {
+		logger.WithError(err).Fatal("Failed to protect data directory")
 	}
 	return &IoChatData{
 		logger:   logger,

@@ -52,6 +52,10 @@ func reviewChatDeliveryKey(chatID int64) reviewDeliveryKey {
 	return reviewDeliveryKey{chatID: chatID}
 }
 
+func reviewGlobalDeliveryKey() reviewDeliveryKey {
+	return reviewDeliveryKey{}
+}
+
 func isTelegramRateLimit(err error) bool {
 	var apiError *tgbotapi.Error
 	return errors.As(err, &apiError) && apiError.Code == 429
@@ -60,7 +64,7 @@ func isTelegramRateLimit(err error) bool {
 func (lnb *LitNightBot) automatedReviewDeliveryAllowed(key reviewDeliveryKey, at time.Time) bool {
 	lnb.reviewRetryMu.Lock()
 	defer lnb.reviewRetryMu.Unlock()
-	for _, candidate := range []reviewDeliveryKey{reviewChatDeliveryKey(key.chatID), key} {
+	for _, candidate := range []reviewDeliveryKey{reviewGlobalDeliveryKey(), reviewChatDeliveryKey(key.chatID), key} {
 		retryAt, exists := lnb.reviewRetryAt[candidate]
 		if !exists {
 			continue
@@ -70,6 +74,21 @@ func (lnb *LitNightBot) automatedReviewDeliveryAllowed(key reviewDeliveryKey, at
 		}
 		delete(lnb.reviewRetryAt, candidate)
 	}
+	return true
+}
+
+func (lnb *LitNightBot) automatedReviewBatchAllowed(at time.Time) bool {
+	lnb.reviewRetryMu.Lock()
+	defer lnb.reviewRetryMu.Unlock()
+	key := reviewGlobalDeliveryKey()
+	retryAt, exists := lnb.reviewRetryAt[key]
+	if !exists {
+		return true
+	}
+	if at.Before(retryAt) {
+		return false
+	}
+	delete(lnb.reviewRetryAt, key)
 	return true
 }
 
@@ -192,7 +211,7 @@ func reviewReplyConfigForChat(chatID int64, book *chatdata.ClubBook, user *tgbot
 		userID = user.ID
 	}
 	marker := fmt.Sprintf("review:%s:%d", book.ID, userID)
-	if private && sourceMessageID > 0 {
+	if sourceMessageID > 0 && (private || sourceView == reviewSourceCard) {
 		marker += ":" + strconv.Itoa(sourceMessageID)
 		if sourceView == reviewSourceCard {
 			marker += ":" + sourceView
@@ -401,6 +420,11 @@ func (lnb *LitNightBot) handleReviewReply(message *tgbotapi.Message, original st
 			lnb.SendHTMLMessage(message.Chat.ID, text, buttons)
 		}
 	} else {
+		if sourceView == reviewSourceCard && sourceMessageID > 0 {
+			if _, editErr := lnb.editHTMLMessage(message.Chat.ID, sourceMessageID, renderBookCardForChat(book, false, 0), bookCardButtonsForChat(book, false, 0)); editErr != nil {
+				logger.WithError(editErr).WithField("source_message_id", sourceMessageID).Warn("Failed to refresh group book card after review")
+			}
+		}
 		lnb.SendHTMLMessage(message.Chat.ID, renderGroupReviewSaved(book, message.From, updated), groupReviewSavedButtons(book, message.From.ID))
 	}
 	if message.ReplyToMessage != nil {
@@ -617,6 +641,7 @@ func (lnb *LitNightBot) sendReviewRequest(chatID int64, data *chatdata.ChatData,
 			if rateLimited {
 				lnb.rememberAutomatedReviewRetry(deliveryKey, retryAt)
 				lnb.rememberAutomatedReviewRetry(reviewChatDeliveryKey(chatID), retryAt)
+				lnb.rememberAutomatedReviewRetry(reviewGlobalDeliveryKey(), retryAt)
 			}
 			book.DeferReviewRequest(retryAt)
 			if lnb.persistReviewState(chatID, data, logger) != persistenceDurable {
@@ -758,6 +783,7 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 						if rateLimited {
 							lnb.rememberAutomatedReviewRetry(deliveryKey, retryAt)
 							lnb.rememberAutomatedReviewRetry(reviewChatDeliveryKey(chatID), retryAt)
+							lnb.rememberAutomatedReviewRetry(reviewGlobalDeliveryKey(), retryAt)
 						}
 						reminder.ReleaseDeliveryClaim()
 						reminder.DueAt = retryAt
@@ -815,6 +841,10 @@ func (lnb *LitNightBot) sendDueReviewReminders(chatID int64, data *chatdata.Chat
 }
 
 func (lnb *LitNightBot) ProcessDueReviews(at time.Time, logger *logrus.Entry) {
+	if !lnb.automatedReviewBatchAllowed(at) {
+		logger.Warn("Skipping automated review batch during Telegram RetryAfter")
+		return
+	}
 	files, err := lnb.iocd.GetDatasList()
 	if err != nil {
 		logger.WithError(err).Error("Failed to list chats for review processing")
@@ -844,8 +874,16 @@ func (lnb *LitNightBot) ProcessDueReviews(at time.Time, logger *logrus.Entry) {
 			continue
 		}
 		_, usable := lnb.sendPendingReviewRequests(chatID, data, at, true, logger)
+		if !lnb.automatedReviewBatchAllowed(at) {
+			chatLock.Unlock()
+			return
+		}
 		if usable {
 			_, _ = lnb.sendDueReviewReminders(chatID, data, at, logger)
+		}
+		if !lnb.automatedReviewBatchAllowed(at) {
+			chatLock.Unlock()
+			return
 		}
 		chatLock.Unlock()
 	}

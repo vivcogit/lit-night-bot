@@ -19,6 +19,12 @@ func TestWriteAndReadJSON(t *testing.T) {
 	if err := WriteJSONToFile(path, jsonFixture{Name: "first", Count: 1}); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := WriteJSONToFile(path, jsonFixture{Name: "second", Count: 2}); err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +42,12 @@ func TestWriteAndReadJSON(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "\n  \"name\"") {
 		t.Fatalf("JSON is not indented: %s", raw)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("JSON permissions = %v, %v; want 0600", info, err)
+	}
+	if info, err := os.Stat(filepath.Dir(path)); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("directory permissions = %v, %v; want 0700", info, err)
 	}
 	tempFiles, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".chat-data-*.tmp"))
 	if err != nil || len(tempFiles) != 0 {

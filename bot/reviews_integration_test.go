@@ -397,8 +397,72 @@ func TestMessageLogsDoNotContainPayload(t *testing.T) {
 	if _, err := lnb.editMessage(42, 77, secret, nil); err != nil {
 		t.Fatal(err)
 	}
+	lnb.handleReply(&tgbotapi.Update{Message: &tgbotapi.Message{
+		Text: "ответ", From: &tgbotapi.User{ID: 42}, Chat: &tgbotapi.Chat{ID: 42, Type: "private"},
+		ReplyToMessage: &tgbotapi.Message{MessageID: 77, Text: secret},
+	}}, lnb.logger)
 	if strings.Contains(logs.String(), secret) {
 		t.Fatalf("message payload leaked into logs: %s", logs.String())
+	}
+}
+
+func TestRateLimitStopsEntireReviewBatch(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	recorder.failAPI = 1
+	recorder.failCode = 429
+	recorder.retryAfter = 600
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	first := scheduledReviewData(now)
+	second := scheduledReviewData(now)
+	second.Chat = &chatdata.ChatMetadata{ID: -43, Type: "group", Title: "Второй клуб"}
+	second.Books[0].ID = "done0043"
+	if err := storage.SaveChatData(-42, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.SaveChatData(-43, second); err != nil {
+		t.Fatal(err)
+	}
+	dueAt := now.Add(reviewRequestDelay)
+
+	lnb.ProcessDueReviews(dueAt, lnb.logger)
+
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("rate-limited batch continued in another chat: %d", got)
+	}
+	if book := storage.GetChatData(-43).FindBook("done0043"); book.ReviewRequestClaimedAt != nil || book.ReviewRequestSentAt != nil {
+		t.Fatalf("later chat was touched after global 429: %#v", book)
+	}
+	lnb.ProcessDueReviews(dueAt.Add(9*time.Minute), lnb.logger)
+	if got := len(recorder.snapshot()); got != 0 {
+		t.Fatalf("bot-wide RetryAfter gate allowed %d early deliveries", got)
+	}
+}
+
+func TestWritingReviewFromGroupCardRefreshesCounter(t *testing.T) {
+	lnb, storage, recorder := newReviewIntegrationBot(t)
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := chatdata.NewChatData()
+	data.Chat = &chatdata.ChatMetadata{ID: -42, Type: "group", Title: "Клуб"}
+	data.Books = []chatdata.ClubBook{{ID: "done0001", Title: "Книга", Status: chatdata.StatusCompleted, ReviewRequestSentAt: &now}}
+	if err := storage.SaveChatData(-42, data); err != nil {
+		t.Fatal(err)
+	}
+	user := &tgbotapi.User{ID: 1, FirstName: "Анна"}
+	original := reviewReplyConfigForChat(-42, data.FindBook("done0001"), user, false, 77, reviewSourceCard).Text
+	message := &tgbotapi.Message{
+		Text: "Мой отзыв", From: user, Chat: &tgbotapi.Chat{ID: -42, Type: "group"},
+		ReplyToMessage: &tgbotapi.Message{MessageID: 88, Text: original},
+	}
+
+	if !lnb.handleReviewReply(message, original, lnb.logger) {
+		t.Fatal("review reply was not handled")
+	}
+
+	if got := recorder.editIDsSnapshot(); len(got) != 1 || got[0] != "77" {
+		t.Fatalf("source group card was not refreshed: %#v", got)
+	}
+	if countTextsContaining(recorder.snapshot(), "Отзывов: 1") != 1 {
+		t.Fatalf("refreshed card does not show the new count: %#v", recorder.snapshot())
 	}
 }
 

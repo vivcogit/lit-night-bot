@@ -232,10 +232,12 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 		if len(cbParams) < 1 {
 			return
 		}
-		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+		sourceView := ""
+		if len(cbParams) > 1 && cbParams[1] == reviewSourceCard {
+			sourceView = reviewSourceCard
+		} else if !lnb.reviewCallbackUserAllowed(update, cbParams) {
 			return
 		}
-		sourceView := ""
 		if len(cbParams) > 2 {
 			sourceView = cbParams[2]
 		}

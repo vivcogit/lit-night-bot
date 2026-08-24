@@ -122,7 +122,7 @@ func TestGroupBookCardKeepsReviewEntryPoint(t *testing.T) {
 				continue
 			}
 			action, params, err := GetCallbackParam(*button.CallbackData)
-			if err != nil || action != CBReviewWrite || len(params) != 1 || params[0] != book.ID {
+			if err != nil || action != CBReviewWrite || len(params) != 2 || params[0] != book.ID || params[1] != reviewSourceCard {
 				t.Fatalf("invalid group review entry callback: %q %#v %v", action, params, err)
 			}
 			return

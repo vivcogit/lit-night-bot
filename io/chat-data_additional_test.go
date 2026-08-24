@@ -12,12 +12,18 @@ import (
 
 func TestGetOrCreateAndListData(t *testing.T) {
 	storage := newTestStorage(t)
+	if info, err := os.Stat(storage.dataPath); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("data directory permissions = %v, %v; want 0700", info, err)
+	}
 	created := storage.GetOrCreateChatData(100)
 	if created.SchemaVersion != chatdata.CurrentSchemaVersion || created.MigrationComplete {
 		t.Fatalf("created data = %#v", created)
 	}
 	if _, err := os.Stat(storage.GetChatDataFilePath(100)); err != nil {
 		t.Fatal(err)
+	}
+	if info, err := os.Stat(storage.GetChatDataFilePath(100)); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("chat file permissions = %v, %v; want 0600", info, err)
 	}
 	if err := os.Mkdir(filepath.Join(storage.dataPath, "ignored-directory"), 0o700); err != nil {
 		t.Fatal(err)

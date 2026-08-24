@@ -92,8 +92,8 @@ func TestServerMigrationDryRunAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o640 {
-		t.Fatalf("permissions changed to %o", got)
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("permissions = %o, want 600", got)
 	}
 	if err := migrateStoredChats(storage, true, 0, now); err != nil {
 		t.Fatal(err)

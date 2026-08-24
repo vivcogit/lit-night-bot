@@ -84,6 +84,9 @@ func historyRemovalDetails(book *chatdata.ClubBook) []string {
 	if book.ReviewCollectionOpen() {
 		details = append(details, "данные сбора отзывов")
 	}
+	if book.DiscussionSummary != nil {
+		details = append(details, "итог обсуждения")
+	}
 	return details
 }
 

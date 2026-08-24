@@ -144,9 +144,10 @@ func TestHistoryRemovalListsMixedAssociatedData(t *testing.T) {
 		ReviewRequestSentAt: &now,
 		Reviews:             []chatdata.Review{{UserID: 1}},
 		ReviewReminders:     []chatdata.ReviewReminder{{UserID: 2}, {UserID: 3}},
+		DiscussionSummary:   &chatdata.DiscussionSummary{Text: "Итог", EditorID: 1, CreatedAt: now},
 	}
 	joined := strings.Join(historyRemovalDetails(book), "|")
-	for _, expected := range []string{"2 оценки", "итог сбора оценок", "1 отзыв", "2 напоминания", "данные сбора отзывов"} {
+	for _, expected := range []string{"2 оценки", "итог сбора оценок", "1 отзыв", "2 напоминания", "данные сбора отзывов", "итог обсуждения"} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("removal details miss %q: %s", expected, joined)
 		}

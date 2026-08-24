@@ -44,8 +44,11 @@ func WriteJSONToFile[T any](filePath string, data T) error {
 
 func writeJSONToFile[T any](filePath string, data T, syncDir func(string) error) error {
 	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("ошибка при создании каталога: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("ошибка при настройке прав каталога: %w", err)
 	}
 
 	file, err := os.CreateTemp(dir, ".chat-data-*.tmp")
@@ -54,11 +57,7 @@ func writeJSONToFile[T any](filePath string, data T, syncDir func(string) error)
 	}
 	tempPath := file.Name()
 	defer os.Remove(tempPath)
-	mode := os.FileMode(0o644)
-	if existing, statErr := os.Stat(filePath); statErr == nil {
-		mode = existing.Mode().Perm()
-	}
-	if err := file.Chmod(mode); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		file.Close()
 		return fmt.Errorf("ошибка настройки прав файла: %w", err)
 	}
