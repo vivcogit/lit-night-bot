@@ -34,6 +34,12 @@ const (
 	CBRatingCloseConfirm  CallbackAction = "rating_finish_ok"
 	CBRatingCloseCancel   CallbackAction = "rating_finish_no"
 	CBRatingReopen        CallbackAction = "rating_reopen"
+	CBReviewWrite         CallbackAction = "review_write"
+	CBReviewRemind        CallbackAction = "review_remind"
+	CBReviewSkip          CallbackAction = "review_skip"
+	CBReviewDelete        CallbackAction = "review_delete"
+	CBReviewList          CallbackAction = "review_list"
+	CBReviewBackToBook    CallbackAction = "review_book"
 
 	CBCurrentShow                  CallbackAction = "c_show"
 	CBCurrentChangeDeadlineRequest CallbackAction = "c_deadline"
@@ -41,6 +47,7 @@ const (
 	CBCurrentComplete              CallbackAction = "c_complete"
 	CBCurrentMarkCompleted         CallbackAction = "c_mark_done"
 	CBCurrentMarkUnfinished        CallbackAction = "c_mark_unfinished"
+	CBCurrentUnfinishedReason      CallbackAction = "c_stop_reason"
 	CBCurrentAbort                 CallbackAction = "c_abort"
 	CBCurrentChooseBook            CallbackAction = "c_manual"
 
@@ -221,29 +228,102 @@ func (lnb *LitNightBot) handleCallbackQuery(update *tgbotapi.Update, logger *log
 			return
 		}
 		lnb.reopenRatings(update, cbParams[0], logger)
+	case CBReviewWrite:
+		if len(cbParams) < 1 {
+			return
+		}
+		sourceView := ""
+		if len(cbParams) > 1 && cbParams[1] == reviewSourceCard {
+			sourceView = reviewSourceCard
+		} else if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+			return
+		}
+		if len(cbParams) > 2 {
+			sourceView = cbParams[2]
+		}
+		lnb.requestReview(update, cbParams[0], sourceView, logger)
+	case CBReviewRemind:
+		if len(cbParams) < 1 {
+			return
+		}
+		sourceView := ""
+		if len(cbParams) > 1 && cbParams[1] == reviewSourceRating {
+			sourceView = reviewSourceRating
+		} else if len(cbParams) > 2 && cbParams[2] == reviewSourceCard {
+			sourceView = reviewSourceCard
+		} else if len(cbParams) > 1 {
+			sourceView = reviewSourcePrompt
+		}
+		if sourceView != reviewSourceRating && !lnb.reviewCallbackUserAllowed(update, cbParams) {
+			return
+		}
+		lnb.scheduleReviewReminder(update, cbParams[0], sourceView, logger)
+	case CBReviewSkip:
+		if len(cbParams) < 1 {
+			return
+		}
+		if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+			return
+		}
+		lnb.skipReview(update, cbParams[0], len(cbParams) > 1, logger)
+	case CBReviewDelete:
+		if len(cbParams) < 1 {
+			return
+		}
+		sourceView := ""
+		if len(cbParams) > 1 && cbParams[1] == reviewSourceCard {
+			sourceView = reviewSourceCard
+		} else if !lnb.reviewCallbackUserAllowed(update, cbParams) {
+			return
+		}
+		lnb.deleteReview(update, cbParams[0], sourceView, logger)
+	case CBReviewList:
+		if len(cbParams) < 1 {
+			return
+		}
+		page := 0
+		if len(cbParams) > 1 {
+			page, _ = strconv.Atoi(cbParams[1])
+		}
+		if err := lnb.showReviews(message, cbParams[0], page); err != nil {
+			logger.WithError(err).Warn("Failed to show reviews")
+			lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось открыть отзывы"))
+		} else {
+			lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+		}
+	case CBReviewBackToBook:
+		if len(cbParams) < 1 {
+			return
+		}
+		lnb.showBookCardInPlace(message, cbParams[0])
+		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
 	case CBCurrentShow:
 		lnb.handleCurrent(update, logger)
 	case CBCurrentRandom:
 		lnb.handleCurrentRandom(update, logger)
 	case CBCurrentComplete:
 		lnb.handleCurrentComplete(update, logger)
-	case CBCurrentMarkCompleted, CBCurrentMarkUnfinished:
+	case CBCurrentMarkCompleted:
 		if len(cbParams) < 1 {
 			return
 		}
-		status := chatdata.StatusCompleted
-		if cbAction == CBCurrentMarkUnfinished {
-			status = chatdata.StatusUnfinished
-		}
-		lnb.finishCurrentBook(chatId, messageId, cbParams[0], status, logger)
+		lnb.finishCurrentBook(chatId, messageId, cbParams[0], chatdata.StatusCompleted, logger)
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+	case CBCurrentMarkUnfinished:
+		if len(cbParams) < 1 {
+			return
+		}
+		lnb.showUnfinishedReasonChoices(message, cbParams[0])
+		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+	case CBCurrentUnfinishedReason:
+		lnb.chooseUnfinishedReason(update, cbParams, logger)
 	case CBCurrentChangeDeadlineRequest:
 		lnb.handleCurrentDeadlineRequest(update, logger)
 	case CBCurrentToHistory:
 		if len(cbParams) < 1 {
 			return
 		}
-		lnb.moveCurrentBook(chatId, messageId, cbParams[0], true, logger)
+		lnb.showUnfinishedReasonChoices(message, cbParams[0])
 	case CBCurrentToWishlist:
 		if len(cbParams) < 1 {
 			return

@@ -210,6 +210,69 @@ func TestBookRatingCloseAndReopen(t *testing.T) {
 	}
 }
 
+func TestBookReviewLifecycleAndPerUserReminder(t *testing.T) {
+	now := time.Date(2026, time.August, 23, 18, 0, 0, 0, time.UTC)
+	closedAt := now
+	book := ClubBook{ID: "book1", Title: "Book", Status: StatusCompleted, RatingsClosedAt: &closedAt, RatingsClosedBy: 1}
+	dueAt := now.Add(15 * time.Minute)
+	if !book.ScheduleReviewRequest(dueAt) || book.ReviewRequestDueAt == nil || !book.ReviewRequestDueAt.Equal(dueAt) {
+		t.Fatalf("review request was not scheduled: %#v", book)
+	}
+	book.MarkReviewRequestSent(dueAt, 42)
+	if book.ReviewRequestDueAt != nil || book.ReviewRequestSentAt == nil || book.ReviewRequestMsgID != 42 {
+		t.Fatalf("review request was not marked sent: %#v", book)
+	}
+	reminderAt := dueAt.Add(24 * time.Hour)
+	if err := book.SetReviewReminder(2, " Борис ", "boris", reminderAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := book.SetReviewReminder(2, "Борис Новый", "new_boris", reminderAt.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if len(book.ReviewReminders) != 1 || book.ReviewReminders[0].DisplayName != "Борис Новый" {
+		t.Fatalf("reminder was duplicated instead of updated: %#v", book.ReviewReminders)
+	}
+	if err := book.SetReviewReminder(3, "Вера", "vera", reminderAt); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := book.SetReview(2, "Борис", "boris", " Первая мысль. ", reminderAt)
+	if err != nil || updated || len(book.Reviews) != 1 || len(book.ReviewReminders) != 1 || book.ReviewReminders[0].UserID != 3 {
+		t.Fatalf("unexpected first review: updated=%v err=%v book=%#v", updated, err, book)
+	}
+	updated, err = book.SetReview(2, "Борис", "boris", "Новый текст", reminderAt.Add(time.Hour))
+	if err != nil || !updated || book.Reviews[0].Text != "Новый текст" {
+		t.Fatalf("review was not updated: updated=%v err=%v review=%#v", updated, err, book.Reviews[0])
+	}
+	if !book.DeleteReview(2) || book.DeleteReview(2) {
+		t.Fatal("review deletion must succeed exactly once")
+	}
+}
+
+func TestPendingReviewRequestCanBeCancelledBeforeSending(t *testing.T) {
+	now := time.Now()
+	book := ClubBook{Status: StatusCompleted, RatingsClosedAt: &now}
+	if !book.ScheduleReviewRequest(now.Add(15*time.Minute)) || !book.CancelPendingReviewRequest() || book.ReviewRequestDueAt != nil {
+		t.Fatalf("pending request was not cancelled: %#v", book)
+	}
+	book.ScheduleReviewRequest(now.Add(15 * time.Minute))
+	book.MarkReviewRequestSent(now, 1)
+	if book.CancelPendingReviewRequest() {
+		t.Fatal("sent request must not be cancelled")
+	}
+}
+
+func TestReviewLengthUsesTelegramSafeUTF16Limit(t *testing.T) {
+	book := ClubBook{Status: StatusCompleted}
+	tooLong := strings.Repeat("😀", MaxReviewTextUTF16Units/2+1)
+	if _, err := book.SetReview(1, "Анна", "", tooLong, time.Now()); err == nil {
+		t.Fatal("review exceeding Telegram UTF-16 limit was accepted")
+	}
+	allowed := strings.Repeat("я", MaxReviewTextUTF16Units)
+	if _, err := book.SetReview(1, "Анна", "", allowed, time.Now()); err != nil {
+		t.Fatalf("review at the limit was rejected: %v", err)
+	}
+}
+
 func TestParseStructuredBookCases(t *testing.T) {
 	tests := []struct {
 		input       string
@@ -324,5 +387,108 @@ func TestMigrateV1ErrorsAndFallbacks(t *testing.T) {
 	book := migrated.FindBook("history1")
 	if book == nil || book.CompletedAt == nil || !book.CompletedAt.Equal(now) || !book.AddedAt.Equal(now) {
 		t.Fatalf("zero legacy date fallback failed: %#v", book)
+	}
+}
+
+func TestDeliveryClaimsCanBeRecoveredOnlyAfterLease(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	lease := 15 * time.Minute
+	due := now.Add(-time.Minute)
+	book := ClubBook{Status: StatusCompleted, ReviewRequestDueAt: &due}
+	if !book.ClaimReviewRequest(now, lease) {
+		t.Fatal("initial request claim failed")
+	}
+	if book.ClaimReviewRequest(now.Add(lease-time.Second), lease) {
+		t.Fatal("fresh request claim was stolen")
+	}
+	if !book.ClaimReviewRequest(now.Add(lease), lease) {
+		t.Fatal("expired request claim was not recovered")
+	}
+	reminder := ReviewReminder{UserID: 1, DueAt: due}
+	if !reminder.ClaimDelivery(now, lease) {
+		t.Fatal("initial reminder claim failed")
+	}
+	if reminder.ClaimDelivery(now.Add(lease-time.Second), lease) {
+		t.Fatal("fresh reminder claim was stolen")
+	}
+	if !reminder.ClaimDelivery(now.Add(lease), lease) {
+		t.Fatal("expired reminder claim was not recovered")
+	}
+}
+
+func TestCurrentSchemaRejectsLegacyMigrationSentinel(t *testing.T) {
+	data := NewChatData()
+	data.MigrationComplete = true
+	if err := data.ValidateV2(); err == nil {
+		t.Fatal("current schema accepted migration_complete=true")
+	}
+}
+
+func TestReviewRetryNotBeforeCannotBeBypassed(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	due := now.Add(-time.Minute)
+	retryAt := now.Add(10 * time.Minute)
+	closedAt := now.Add(-time.Hour)
+	book := ClubBook{Status: StatusCompleted, RatingsClosedAt: &closedAt, RatingsClosedBy: 1, ReviewRequestDueAt: &due}
+	book.DeferReviewRequest(retryAt)
+	if book.ClaimReviewRequest(now, 15*time.Minute) {
+		t.Fatal("retry-not-before was bypassed")
+	}
+	if !book.ClaimReviewRequest(retryAt, 15*time.Minute) {
+		t.Fatal("request was not claimable at retry-not-before")
+	}
+	book.MarkReviewRequestSent(retryAt, 42)
+	if book.ReviewRequestRetryAt != nil {
+		t.Fatal("sent transition kept retry-not-before")
+	}
+}
+
+func TestPersonalReviewCollectionCanOpenWithoutRatingClosure(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	book := ClubBook{ID: "book0001", Title: "Книга", Status: StatusCompleted}
+	if !book.OpenReviewCollection(now) || !book.ReviewCollectionOpen() {
+		t.Fatalf("review collection was not opened: %#v", book)
+	}
+	data := NewChatData()
+	data.Chat = &ChatMetadata{ID: 42, Type: "private"}
+	data.Books = []ClubBook{book}
+	if err := data.ValidateV2(); err != nil {
+		t.Fatalf("personal review collection is invalid: %v", err)
+	}
+	data.Books[0].Status = StatusReading
+	if err := data.ValidateV2(); err == nil {
+		t.Fatal("non-completed book kept an open review collection")
+	}
+}
+
+func TestFinishUnfinishedBookStoresStructuredReason(t *testing.T) {
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	data := NewChatData()
+	data.Books = []ClubBook{{ID: "book0001", Title: "Книга", Status: StatusReading}}
+	reason, err := NewUnfinishedReason(UnfinishedReasonOther, "Не совпало с настроением клуба")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := data.FinishCurrentBookWithReason("book0001", StatusUnfinished, reason, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if book.UnfinishedReason == nil || book.UnfinishedReason.DisplayText() != reason.Text || book.StoppedAt == nil {
+		t.Fatalf("unfinished reason was not stored: %#v", book)
+	}
+	if err := data.ValidateV2(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInvalidUnfinishedReasonDoesNotMutateCurrentBook(t *testing.T) {
+	data := NewChatData()
+	data.Books = []ClubBook{{ID: "book0001", Title: "Книга", Status: StatusReading}}
+	invalid := &UnfinishedReason{Code: UnfinishedReasonOther, Text: " "}
+	if _, err := data.FinishCurrentBookWithReason("book0001", StatusUnfinished, invalid, time.Now()); err == nil {
+		t.Fatal("invalid reason was accepted")
+	}
+	if data.CurrentBook() == nil || data.CurrentBook().UnfinishedReason != nil {
+		t.Fatalf("invalid reason mutated current book: %#v", data.Books[0])
 	}
 }

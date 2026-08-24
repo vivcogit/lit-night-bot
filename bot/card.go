@@ -13,6 +13,12 @@ import (
 
 const migrationCompleteText = "✅ Все карточки проверены."
 
+const (
+	cardBookFieldUTF16Limit = 600
+	cardReviewUTF16Limit    = 2000
+	cardAuxFieldUTF16Limit  = 400
+)
+
 func statusLabel(status chatdata.BookStatus) string {
 	switch status {
 	case chatdata.StatusWishlist:
@@ -38,9 +44,9 @@ func renderBookCard(book *chatdata.ClubBook) string {
 
 func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) string {
 	var text strings.Builder
-	text.WriteString("📖 <b>" + html.EscapeString(book.Title) + "</b>\n")
+	text.WriteString("📖 <b>" + html.EscapeString(truncateUTF16(book.Title, cardBookFieldUTF16Limit)) + "</b>\n")
 	if len(book.Authors) > 0 {
-		text.WriteString("✍️ " + html.EscapeString(strings.Join(book.Authors, ", ")) + "\n")
+		text.WriteString("✍️ " + html.EscapeString(truncateUTF16(strings.Join(book.Authors, ", "), cardBookFieldUTF16Limit)) + "\n")
 	} else {
 		text.WriteString("✍️ <i>Автор не указан</i>\n")
 	}
@@ -50,6 +56,9 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 	}
 	if book.StoppedAt != nil {
 		text.WriteString("📅 Завершили чтение: " + book.StoppedAt.Format(DATE_LAYOUT) + "\n")
+	}
+	if book.UnfinishedReason != nil {
+		text.WriteString("💬 Причина: " + html.EscapeString(truncateUTF16(book.UnfinishedReason.DisplayText(), cardAuxFieldUTF16Limit)) + "\n")
 	}
 	if book.Deadline != nil {
 		text.WriteString("🗓 Дедлайн: " + book.Deadline.Format(DATE_LAYOUT) + "\n")
@@ -70,10 +79,23 @@ func renderBookCardForChat(book *chatdata.ClubBook, private bool, userID int64) 
 	if !private && book.RatingsClosedAt != nil {
 		text.WriteString("🏁 Сбор оценок завершён\n")
 	}
+	if book.Status == chatdata.StatusCompleted {
+		if private {
+			if review := book.ReviewByUser(userID); review != nil {
+				text.WriteString("💬 Мой отзыв:\n" + html.EscapeString(truncateUTF16(review.Text, cardReviewUTF16Limit)) + "\n")
+			} else if hasReviewReminder(book, userID) {
+				text.WriteString("⏰ Об отзыве напомню позже\n")
+			} else {
+				text.WriteString("💬 Мой отзыв пока не написан\n")
+			}
+		} else {
+			text.WriteString(fmt.Sprintf("💬 Отзывов: %d\n", len(book.Reviews)))
+		}
+	}
 	if book.NeedsReview {
 		text.WriteString("\n⚠️ <b>Карточка создана миграцией и требует проверки.</b>\n")
 		if book.LegacyName != "" {
-			text.WriteString("Было: <i>" + html.EscapeString(book.LegacyName) + "</i>\n")
+			text.WriteString("Было: <i>" + html.EscapeString(truncateUTF16(book.LegacyName, cardAuxFieldUTF16Limit)) + "</i>\n")
 		}
 	}
 	return text.String()
@@ -101,6 +123,37 @@ func bookCardButtonsForChat(book *chatdata.ClubBook, private bool, userID int64)
 			ratingRow = append(ratingRow, tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("👥 Оценки (%d)", len(book.Ratings)), GetCallbackParamStr(CBRatingList, book.ID, "0")))
 		}
 		buttons = append(buttons, ratingRow)
+		if private {
+			if book.ReviewByUser(userID) != nil {
+				buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10), reviewSourceCard)),
+					tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить отзыв", GetCallbackParamStr(CBReviewDelete, book.ID, strconv.FormatInt(userID, 10))),
+				))
+			} else {
+				buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, strconv.FormatInt(userID, 10), reviewSourceCard)),
+				))
+				if !hasReviewReminder(book, userID) {
+					buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID, strconv.FormatInt(userID, 10), reviewSourceCard)),
+					))
+				}
+			}
+		} else {
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("💬 Отзывы (%d)", len(book.Reviews)), GetCallbackParamStr(CBReviewList, book.ID, "0")),
+			))
+			if book.ReviewCollectionOpen() {
+				buttons = append(buttons,
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData("✍️ Написать / изменить мой отзыв", GetCallbackParamStr(CBReviewWrite, book.ID, reviewSourceCard)),
+					),
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить мой отзыв", GetCallbackParamStr(CBReviewDelete, book.ID, reviewSourceCard)),
+					),
+				)
+			}
+		}
 	}
 	buttons = append(buttons,
 		tgbotapi.NewInlineKeyboardRow(
@@ -278,9 +331,6 @@ func (lnb *LitNightBot) approveBookCard(message *tgbotapi.Message, id string, lo
 			remaining++
 		}
 	}
-	if remaining == 0 {
-		data.MigrationComplete = true
-	}
 	if !lnb.saveChatData(message.Chat.ID, data, logger) {
 		return
 	}
@@ -300,10 +350,6 @@ func (lnb *LitNightBot) showBooksForReview(chatID int64, messageID int, page int
 		}
 	}
 	if len(books) == 0 {
-		data.MigrationComplete = true
-		if !lnb.saveChatData(chatID, data, logger) {
-			return
-		}
 		lnb.editMessage(chatID, messageID, migrationCompleteText, nil)
 		return
 	}

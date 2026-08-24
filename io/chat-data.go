@@ -75,6 +75,10 @@ func (iocd *IoChatData) GetOrCreateChatData(chatId int64) *chatdata.ChatData {
 	}
 	data = chatdata.NewChatData()
 	if err := iocd.SaveChatData(chatId, data); err != nil {
+		if utils.IsPostCommitDurabilityError(err) {
+			iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Created chat data is visible, but directory durability is uncertain")
+			return data
+		}
 		iocd.logger.WithField("chat_id", chatId).WithError(err).Error("Failed to create chat data")
 		return nil
 	}
@@ -95,10 +99,37 @@ func (iocd *IoChatData) BackupChatData(chatId int64) (string, error) {
 	if err := os.MkdirAll(backupDir, 0o700); err != nil {
 		return "", fmt.Errorf("не удалось создать каталог копий: %w", err)
 	}
+	if err := utils.SyncDirectory(iocd.dataPath); err != nil {
+		return "", fmt.Errorf("не удалось синхронизировать каталог данных: %w", err)
+	}
+	if err := utils.SyncDirectory(filepath.Dir(backupDir)); err != nil {
+		return "", fmt.Errorf("не удалось синхронизировать каталог копий: %w", err)
+	}
 	backupPath := filepath.Join(backupDir, fmt.Sprintf("%d-%s.json", chatId, time.Now().Format("20060102-150405.000000000")))
-	if err := os.WriteFile(backupPath, raw, 0o600); err != nil {
+	backup, err := os.OpenFile(backupPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("не удалось создать копию: %w", err)
+	}
+	complete := false
+	defer func() {
+		_ = backup.Close()
+		if !complete {
+			_ = os.Remove(backupPath)
+		}
+	}()
+	if _, err := backup.Write(raw); err != nil {
 		return "", fmt.Errorf("не удалось записать копию: %w", err)
 	}
+	if err := backup.Sync(); err != nil {
+		return "", fmt.Errorf("не удалось синхронизировать копию: %w", err)
+	}
+	if err := backup.Close(); err != nil {
+		return "", fmt.Errorf("не удалось закрыть копию: %w", err)
+	}
+	if err := utils.SyncDirectory(backupDir); err != nil {
+		return "", fmt.Errorf("не удалось синхронизировать каталог копий: %w", err)
+	}
+	complete = true
 	return backupPath, nil
 }
 
@@ -130,8 +161,11 @@ func (iocd *IoChatData) GetDatasList() ([]string, error) {
 }
 
 func NewIOChatData(logger *logrus.Entry, dataPath string) *IoChatData {
-	if err := os.MkdirAll(dataPath, 0o755); err != nil {
+	if err := os.MkdirAll(dataPath, 0o700); err != nil {
 		logger.WithError(err).Fatal("Failed to create data directory")
+	}
+	if err := os.Chmod(dataPath, 0o700); err != nil {
+		logger.WithError(err).Fatal("Failed to protect data directory")
 	}
 	return &IoChatData{
 		logger:   logger,

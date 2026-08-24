@@ -69,6 +69,10 @@ func renderRatingPanel(book *chatdata.ClubBook, justCompleted bool) string {
 	return renderRatingPanelForChat(book, justCompleted, false, 0)
 }
 
+func ratingBookName(book *chatdata.ClubBook) string {
+	return truncateUTF16(book.DisplayName(), 1000)
+}
+
 func renderRatingPanelForChat(book *chatdata.ClubBook, justCompleted bool, private bool, userID int64) string {
 	if private {
 		return renderPersonalRatingPanel(book, justCompleted, userID)
@@ -78,10 +82,10 @@ func renderRatingPanelForChat(book *chatdata.ClubBook, justCompleted bool, priva
 	}
 	var text strings.Builder
 	if justCompleted {
-		text.WriteString("✅ <b>«" + html.EscapeString(book.DisplayName()) + "» прочитана!</b>\n\n")
+		text.WriteString("✅ <b>«" + html.EscapeString(ratingBookName(book)) + "» обсуждена!</b>\n\n")
 	} else {
 		text.WriteString("⭐ <b>Оценка книги</b>\n")
-		text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
+		text.WriteString("«" + html.EscapeString(ratingBookName(book)) + "»\n\n")
 	}
 	text.WriteString("Как вам книга?\n\n")
 	if len(book.Ratings) == 0 {
@@ -95,23 +99,39 @@ func renderRatingPanelForChat(book *chatdata.ClubBook, justCompleted bool, priva
 func renderPersonalRatingPanel(book *chatdata.ClubBook, justCompleted bool, userID int64) string {
 	var text strings.Builder
 	if justCompleted {
-		text.WriteString("✅ <b>«" + html.EscapeString(book.DisplayName()) + "» прочитана!</b>\n\n")
+		text.WriteString("✅ <b>«" + html.EscapeString(ratingBookName(book)) + "» прочитана!</b>\n\n")
 	} else {
 		text.WriteString("📚 <b>Личный читательский дневник</b>\n")
-		text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
+		text.WriteString("«" + html.EscapeString(ratingBookName(book)) + "»\n\n")
 	}
 	if rating := book.RatingByUser(userID); rating != nil {
-		text.WriteString(fmt.Sprintf("⭐ Моя оценка: <b>%d из 10</b>", rating.Value))
+		text.WriteString(fmt.Sprintf("⭐ Моя оценка: <b>%d из 10</b>\n", rating.Value))
 	} else {
-		text.WriteString("⭐ Моя оценка: <i>пока не поставлена</i>\n\nКак вам книга?")
+		text.WriteString("⭐ Моя оценка: <i>пока не поставлена</i>\n")
+	}
+	if book.ReviewByUser(userID) != nil {
+		text.WriteString("💬 Мой отзыв: <b>написан</b>")
+	} else if hasReviewReminder(book, userID) {
+		text.WriteString("⏰ Об отзыве: <b>напомню позже</b>\n\nОценку можно поставить сейчас или вернуться к карточке книги.")
+	} else {
+		text.WriteString("💬 Мой отзыв: <i>пока не написан</i>\n\nКак вам книга?")
 	}
 	return text.String()
+}
+
+func hasReviewReminder(book *chatdata.ClubBook, userID int64) bool {
+	for _, reminder := range book.ReviewReminders {
+		if reminder.UserID == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func renderRatingResult(book *chatdata.ClubBook) string {
 	var text strings.Builder
 	text.WriteString("🏁 <b>Сбор оценок завершён</b>\n\n")
-	text.WriteString("📖 «" + html.EscapeString(book.DisplayName()) + "»\n")
+	text.WriteString("📖 «" + html.EscapeString(ratingBookName(book)) + "»\n")
 	if len(book.Ratings) == 0 {
 		text.WriteString("⭐ Итоговой оценки нет\n")
 		text.WriteString("👥 Никто не проголосовал")
@@ -167,15 +187,24 @@ func personalRatingPanelButtons(book *chatdata.ClubBook) [][]tgbotapi.InlineKeyb
 			secondRow = append(secondRow, button)
 		}
 	}
-	return [][]tgbotapi.InlineKeyboardButton{
+	buttons := [][]tgbotapi.InlineKeyboardButton{
 		firstRow,
 		secondRow,
+	}
+	if len(book.Reviews) == 0 && len(book.ReviewReminders) == 0 {
+		buttons = append(buttons,
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✍️ Написать отзыв", GetCallbackParamStr(CBReviewWrite, book.ID))),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏰ Напомнить завтра об отзыве", GetCallbackParamStr(CBReviewRemind, book.ID, reviewSourceRating))),
+		)
+	}
+	buttons = append(buttons,
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить мою оценку", GetCallbackParamStr(CBRatingDeleteRequest, book.ID))),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("← К карточке", GetCallbackParamStr(CBRatingBackToBook, book.ID)),
 			tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
 		),
-	}
+	)
+	return buttons
 }
 
 func ratingResultButtons(book *chatdata.ClubBook) [][]tgbotapi.InlineKeyboardButton {
@@ -187,6 +216,35 @@ func ratingResultButtons(book *chatdata.ClubBook) [][]tgbotapi.InlineKeyboardBut
 			tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
 		),
 	}
+}
+
+func ratingResultButtonsWithNextBook(book *chatdata.ClubBook, data *chatdata.ChatData) [][]tgbotapi.InlineKeyboardButton {
+	buttons := make([][]tgbotapi.InlineKeyboardButton, 0, 6)
+	if data != nil && data.CurrentBook() == nil {
+		if len(data.BooksWithStatus(chatdata.StatusWishlist)) == 0 {
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("➕ Добавить в вишлист", GetCallbackParamStr(CBWishlistAddBookRequest)),
+			))
+		} else {
+			buttons = append(buttons,
+				tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🎲 Случайная книга", GetCallbackParamStr(CBCurrentRandom))),
+				tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📘 Выбрать книгу", GetCallbackParamStr(CBWishlistChoose))),
+			)
+		}
+	}
+	buttons = append(buttons, ratingResultButtons(book)...)
+	return buttons
+}
+
+func renderRatingResultWithNextBook(book *chatdata.ClubBook, data *chatdata.ChatData) string {
+	text := renderRatingResult(book)
+	if data == nil || data.CurrentBook() != nil {
+		return text
+	}
+	if len(data.BooksWithStatus(chatdata.StatusWishlist)) == 0 {
+		return text + "\n\n📚 Вишлист пуст. Добавьте книги, когда будете готовы, и вернитесь к выбору позже."
+	}
+	return text + "\n\nВыберите следующую книгу случайно или из вишлиста."
 }
 
 func renderRatingsList(book *chatdata.ClubBook, page int) (string, int, int) {
@@ -206,7 +264,7 @@ func renderRatingsList(book *chatdata.ClubBook, page int) (string, int, int) {
 	}
 	var text strings.Builder
 	text.WriteString("⭐ <b>Оценки книги</b>\n")
-	text.WriteString("«" + html.EscapeString(book.DisplayName()) + "»\n\n")
+	text.WriteString("«" + html.EscapeString(ratingBookName(book)) + "»\n\n")
 	if len(ratings) == 0 {
 		text.WriteString("Оценок пока нет.")
 		return text.String(), page, lastPage
@@ -296,7 +354,7 @@ func (lnb *LitNightBot) setBookRating(update *tgbotapi.Update, bookID string, va
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, err.Error()))
 		return
 	}
-	if err := lnb.iocd.SaveChatData(message.Chat.ID, data); err != nil {
+	if err := lnb.commitChatData(message.Chat.ID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to save rating")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось сохранить оценку"))
 		return
@@ -351,7 +409,7 @@ func (lnb *LitNightBot) requestRatingDelete(update *tgbotapi.Update, bookID stri
 		tgbotapi.NewInlineKeyboardButtonData("Удалить", GetCallbackParamStr(CBRatingDeleteConfirm, book.ID, strconv.FormatInt(user.ID, 10), strconv.Itoa(message.MessageID))),
 		tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBRatingDeleteCancel, strconv.FormatInt(user.ID, 10))),
 	)}
-	text := fmt.Sprintf("🗑 <b>%s</b>, удалить вашу оценку книге «%s»?", html.EscapeString(telegramDisplayName(user)), html.EscapeString(book.DisplayName()))
+	text := fmt.Sprintf("🗑 <b>%s</b>, удалить вашу оценку книге «%s»?", html.EscapeString(telegramDisplayName(user)), html.EscapeString(ratingBookName(book)))
 	lnb.SendHTMLMessage(message.Chat.ID, text, buttons)
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
 }
@@ -378,7 +436,7 @@ func (lnb *LitNightBot) confirmRatingDelete(update *tgbotapi.Update, params []st
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Оценка уже удалена"))
 		return
 	}
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to delete rating")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось удалить оценку"))
 		return
@@ -444,11 +502,14 @@ func (lnb *LitNightBot) confirmRatingClose(update *tgbotapi.Update, params []str
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Книга не найдена"))
 		return
 	}
-	if err := book.CloseRatings(user.ID, telegramDisplayName(user), time.Now()); err != nil {
+	now := time.Now()
+	if err := book.CloseRatings(user.ID, telegramDisplayName(user), now); err != nil {
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, err.Error()))
 		return
 	}
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	book.ScheduleReviewRequest(now.Add(reviewRequestDelay))
+	sendReviewImmediately := data.CurrentBook() != nil
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to close ratings")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось сохранить итог"))
 		return
@@ -456,7 +517,10 @@ func (lnb *LitNightBot) confirmRatingClose(update *tgbotapi.Update, params []str
 	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Итог готов"))
 	lnb.removeMessage(chatID, update.CallbackQuery.Message.MessageID)
 	if sourceMessageID > 0 {
-		lnb.editHTMLMessage(chatID, sourceMessageID, renderRatingResult(book), ratingResultButtons(book))
+		lnb.editHTMLMessage(chatID, sourceMessageID, renderRatingResultWithNextBook(book, data), ratingResultButtonsWithNextBook(book, data))
+	}
+	if sendReviewImmediately {
+		_, _ = lnb.sendPendingReviewRequests(chatID, data, time.Now(), false, logger)
 	}
 }
 
@@ -489,7 +553,8 @@ func (lnb *LitNightBot) reopenRatings(update *tgbotapi.Update, bookID string, lo
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Сбор оценок уже открыт"))
 		return
 	}
-	if err := lnb.iocd.SaveChatData(message.Chat.ID, data); err != nil {
+	book.CancelPendingReviewRequest()
+	if err := lnb.commitChatData(message.Chat.ID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to reopen ratings")
 		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось возобновить сбор оценок"))
 		return

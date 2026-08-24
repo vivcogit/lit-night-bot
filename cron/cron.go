@@ -30,5 +30,8 @@ func StartCron(logger *logrus.Entry, iocd *io.IoChatData, lnb *bot.LitNightBot, 
 }
 
 func newCron(location *time.Location) *cron.Cron {
-	return cron.New(cron.WithLocation(location))
+	return cron.New(
+		cron.WithLocation(location),
+		cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)),
+	)
 }

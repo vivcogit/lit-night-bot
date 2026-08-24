@@ -39,6 +39,16 @@ func TestCallbackParametersRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTelegramHTTPTimeoutBoundsLongPolling(t *testing.T) {
+	client := newTelegramHTTPClient()
+	if client.Timeout <= time.Duration(telegramLongPollSeconds)*time.Second {
+		t.Fatalf("HTTP timeout %s must exceed long poll", client.Timeout)
+	}
+	if client.Timeout > 90*time.Second {
+		t.Fatalf("HTTP timeout %s leaves chat lock unbounded for too long", client.Timeout)
+	}
+}
+
 func TestReviewCallbackKeepsMenuMessageForEditing(t *testing.T) {
 	if shouldRemoveMenuMessage(menuText, CBBooksReview) {
 		t.Fatal("review callback must keep the menu message because it edits it in place")
@@ -166,14 +176,14 @@ func TestRenderDetailedBookCardAndButtons(t *testing.T) {
 		}
 	}
 	buttons := bookCardButtons(book)
-	if len(buttons) != 5 {
-		t.Fatalf("button rows = %d, want 5", len(buttons))
+	if len(buttons) != 6 {
+		t.Fatalf("button rows = %d, want 6", len(buttons))
 	}
 	book.Authors = nil
 	book.NeedsReview = false
 	buttons = bookCardButtons(book)
-	if len(buttons) != 3 {
-		t.Fatalf("minimal button rows = %d, want 3", len(buttons))
+	if len(buttons) != 4 {
+		t.Fatalf("minimal button rows = %d, want 4", len(buttons))
 	}
 }
 
@@ -238,7 +248,7 @@ func TestCurrentBookSelectionChecks(t *testing.T) {
 
 func TestCurrentCompletionStatusButtons(t *testing.T) {
 	buttons := currentCompletionButtons("book0001")
-	if len(buttons) != 3 || buttons[0][0].Text != "✅ Прочитали" || buttons[1][0].Text != "🚫 Не дочитали / бросили" {
+	if len(buttons) != 3 || buttons[0][0].Text != "✅ Обсудили" || buttons[1][0].Text != "🚫 Не дочитали / бросили" {
 		t.Fatalf("unexpected completion buttons: %#v", buttons)
 	}
 	for index, want := range []CallbackAction{CBCurrentMarkCompleted, CBCurrentMarkUnfinished} {
@@ -246,6 +256,13 @@ func TestCurrentCompletionStatusButtons(t *testing.T) {
 		if err != nil || action != want || len(params) != 1 || params[0] != "book0001" {
 			t.Fatalf("button %d callback = %q, %#v, %v", index, action, params, err)
 		}
+	}
+}
+
+func TestPersonalCompletionUsesReadLabel(t *testing.T) {
+	buttons := currentCompletionButtonsForChat("book0001", true)
+	if buttons[0][0].Text != "✅ Прочитано" {
+		t.Fatalf("personal completion label = %q", buttons[0][0].Text)
 	}
 }
 

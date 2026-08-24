@@ -12,12 +12,18 @@ import (
 
 func TestGetOrCreateAndListData(t *testing.T) {
 	storage := newTestStorage(t)
+	if info, err := os.Stat(storage.dataPath); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("data directory permissions = %v, %v; want 0700", info, err)
+	}
 	created := storage.GetOrCreateChatData(100)
-	if created.SchemaVersion != chatdata.CurrentSchemaVersion || !created.MigrationComplete {
+	if created.SchemaVersion != chatdata.CurrentSchemaVersion || created.MigrationComplete {
 		t.Fatalf("created data = %#v", created)
 	}
 	if _, err := os.Stat(storage.GetChatDataFilePath(100)); err != nil {
 		t.Fatal(err)
+	}
+	if info, err := os.Stat(storage.GetChatDataFilePath(100)); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("chat file permissions = %v, %v; want 0600", info, err)
 	}
 	if err := os.Mkdir(filepath.Join(storage.dataPath, "ignored-directory"), 0o700); err != nil {
 		t.Fatal(err)
@@ -93,5 +99,27 @@ func TestConcurrentSavesRemainReadable(t *testing.T) {
 	data := storage.GetChatData(42)
 	if data == nil || len(data.Books) != 1 || data.Books[0].Title == "" {
 		t.Fatalf("unreadable final data: %#v", data)
+	}
+}
+
+func TestDataDirectoryLockIsExclusiveAndRecoverable(t *testing.T) {
+	first := newTestStorage(t)
+	second := NewIOChatData(first.logger, first.dataPath)
+	firstLock, err := first.TryAcquireDataDirectoryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.TryAcquireDataDirectoryLock(); !errors.Is(err, ErrDataDirectoryLocked) {
+		t.Fatalf("second writer lock error = %v, want ErrDataDirectoryLocked", err)
+	}
+	if err := firstLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	secondLock, err := second.TryAcquireDataDirectoryLock()
+	if err != nil {
+		t.Fatalf("lock was not released: %v", err)
+	}
+	if err := secondLock.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

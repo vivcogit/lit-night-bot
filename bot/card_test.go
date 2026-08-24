@@ -1,12 +1,23 @@
 package bot
 
 import (
+	"html"
 	chatdata "lit-night-bot/chat-data"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+
+func visibleHTMLUTF16Units(text string) int {
+	plain := html.UnescapeString(htmlTagPattern.ReplaceAllString(text, ""))
+	return len(utf16.Encode([]rune(plain)))
+}
 
 func TestRenderBookCardEscapesHTML(t *testing.T) {
 	book := &chatdata.ClubBook{
@@ -33,6 +44,104 @@ func TestPersonalBookCardShowsOnlyOwnRating(t *testing.T) {
 	buttons := bookCardButtonsForChat(book, true, 1)
 	if len(buttons[0]) != 1 || buttons[0][0].Text != "⭐ Моя оценка: 8" {
 		t.Fatalf("unexpected personal rating button: %#v", buttons[0])
+	}
+}
+
+func TestPersonalBookCardShowsReviewInline(t *testing.T) {
+	book := ratingTestBook()
+	book.Reviews = []chatdata.Review{{UserID: 1, DisplayName: "Анна", Text: "Важная <книга> & хороший финал"}}
+	text := renderBookCardForChat(book, true, 1)
+	if !strings.Contains(text, "💬 Мой отзыв:\nВажная &lt;книга&gt; &amp; хороший финал") {
+		t.Fatalf("personal review is not rendered safely in card: %s", text)
+	}
+	labels := buttonLabels(bookCardButtonsForChat(book, true, 1))
+	if strings.Contains(labels, "💬 Мой отзыв") || !strings.Contains(labels, "✏️ Изменить отзыв") || !strings.Contains(labels, "🗑 Удалить отзыв") {
+		t.Fatalf("personal card still requires a separate review page: %s", labels)
+	}
+	buttons := bookCardButtonsForChat(book, true, 1)
+	action, params, err := GetCallbackParam(*buttons[1][0].CallbackData)
+	if err != nil || action != CBReviewWrite || len(params) != 3 || params[2] != reviewSourceCard {
+		t.Fatalf("card edit action lost its source context: %q %#v %v", action, params, err)
+	}
+}
+
+func TestPersonalBookCardShowsScheduledReviewReminder(t *testing.T) {
+	book := ratingTestBook()
+	withoutReminder := bookCardButtonsForChat(book, true, 1)
+	var reminderCallback string
+	for _, row := range withoutReminder {
+		for _, button := range row {
+			if button.Text == "⏰ Напомнить завтра об отзыве" {
+				reminderCallback = *button.CallbackData
+			}
+		}
+	}
+	action, params, err := GetCallbackParam(reminderCallback)
+	if err != nil || action != CBReviewRemind || len(params) != 3 || params[1] != "1" || params[2] != reviewSourceCard {
+		t.Fatalf("card reminder lost user/source context: %q %#v %v", action, params, err)
+	}
+
+	book.ReviewReminders = []chatdata.ReviewReminder{{UserID: 1}}
+	text := renderBookCardForChat(book, true, 1)
+	labels := buttonLabels(bookCardButtonsForChat(book, true, 1))
+	if !strings.Contains(text, "Об отзыве напомню позже") {
+		t.Fatalf("card does not show scheduled reminder: %s", text)
+	}
+	if strings.Contains(labels, "Напомнить") || !strings.Contains(labels, "Написать отзыв") {
+		t.Fatalf("unexpected reminder-state actions: %s", labels)
+	}
+}
+
+func TestGroupBookCardKeepsReviewEntryPoint(t *testing.T) {
+	book := ratingTestBook()
+	now := time.Date(2026, 8, 23, 18, 0, 0, 0, time.UTC)
+	book.ReviewRequestSentAt = &now
+
+	buttons := bookCardButtonsForChat(book, false, 0)
+	labels := buttonLabels(buttons)
+	if !strings.Contains(labels, "Написать / изменить мой отзыв") {
+		t.Fatalf("group card has no persistent own-review action: %s", labels)
+	}
+	if !strings.Contains(labels, "Удалить мой отзыв") {
+		t.Fatalf("group card has no persistent own-review delete action: %s", labels)
+	}
+	for _, row := range buttons {
+		for _, button := range row {
+			if !strings.Contains(button.Text, "Удалить мой отзыв") {
+				continue
+			}
+			action, params, err := GetCallbackParam(*button.CallbackData)
+			if err != nil || action != CBReviewDelete || len(params) != 2 || params[1] != reviewSourceCard {
+				t.Fatalf("invalid group review delete callback: %q %#v %v", action, params, err)
+			}
+		}
+	}
+	for _, row := range buttons {
+		for _, button := range row {
+			if !strings.Contains(button.Text, "Написать / изменить") {
+				continue
+			}
+			action, params, err := GetCallbackParam(*button.CallbackData)
+			if err != nil || action != CBReviewWrite || len(params) != 2 || params[0] != book.ID || params[1] != reviewSourceCard {
+				t.Fatalf("invalid group review entry callback: %q %#v %v", action, params, err)
+			}
+			return
+		}
+	}
+	t.Fatal("group review entry button not found")
+}
+
+func TestPersonalBookCardFitsTelegramMessageLimit(t *testing.T) {
+	book := ratingTestBook()
+	book.Title = strings.Repeat("😀", 2500)
+	book.Authors = []string{strings.Repeat("А", 5000)}
+	book.LegacyName = strings.Repeat("Б", 5000)
+	book.NeedsReview = true
+	book.Reviews = []chatdata.Review{{UserID: 1, Text: strings.Repeat("😀", chatdata.MaxReviewTextUTF16Units/2)}}
+
+	text := renderBookCardForChat(book, true, 1)
+	if units := visibleHTMLUTF16Units(text); units > 4096 {
+		t.Fatalf("personal card has %d UTF-16 units, Telegram limit is 4096", units)
 	}
 }
 

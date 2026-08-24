@@ -71,15 +71,21 @@ func TestPersonalDiaryRatingPanelHidesClubData(t *testing.T) {
 		}
 	}
 	buttons := ratingPanelButtonsForChat(book, true)
-	if len(buttons) != 4 {
-		t.Fatalf("personal button rows = %d, want 4", len(buttons))
+	if len(buttons) != 6 {
+		t.Fatalf("personal button rows = %d, want 6", len(buttons))
 	}
+	foundReview, foundReminder := false, false
 	for _, row := range buttons {
 		for _, button := range row {
 			if strings.Contains(button.Text, "Кто как") || strings.Contains(button.Text, "Завершить сбор") {
 				t.Fatalf("club action leaked into personal diary: %q", button.Text)
 			}
+			foundReview = foundReview || button.Text == "✍️ Написать отзыв"
+			foundReminder = foundReminder || button.Text == "⏰ Напомнить завтра об отзыве"
 		}
+	}
+	if !foundReview || !foundReminder {
+		t.Fatalf("personal review actions are missing: %#v", buttons)
 	}
 }
 
@@ -87,6 +93,65 @@ func TestPersonalDiaryWithoutRating(t *testing.T) {
 	text := renderRatingPanelForChat(ratingTestBook(), false, true, 999)
 	if !strings.Contains(text, "пока не поставлена") || strings.Contains(text, "8,5") {
 		t.Fatalf("unexpected empty personal rating: %s", text)
+	}
+}
+
+func TestRatingPanelsFitTelegramMessageLimit(t *testing.T) {
+	book := ratingTestBook()
+	book.Title = strings.Repeat("😀", 2500)
+	book.Authors = []string{strings.Repeat("А", 5000)}
+	for _, text := range []string{
+		renderRatingPanelForChat(book, true, false, 1),
+		renderPersonalRatingPanel(book, true, 1),
+		renderRatingResult(book),
+	} {
+		if units := visibleHTMLUTF16Units(text); units > 4096 {
+			t.Fatalf("rating panel has %d UTF-16 units, Telegram limit is 4096", units)
+		}
+	}
+}
+
+func TestPersonalDiaryRatingPanelWithReviewHasNoReviewButton(t *testing.T) {
+	book := ratingTestBook()
+	book.Reviews = []chatdata.Review{{
+		ID:          "review01",
+		UserID:      1,
+		DisplayName: "Анна",
+		Text:        "Мой отзыв",
+		CreatedAt:   time.Date(2026, 8, 23, 19, 0, 0, 0, time.UTC),
+	}}
+
+	buttons := ratingPanelButtonsForChat(book, true)
+	if len(buttons) != 4 {
+		t.Fatalf("personal button rows = %d, want 4: %#v", len(buttons), buttons)
+	}
+	for _, row := range buttons {
+		for _, button := range row {
+			if strings.Contains(button.Text, "отзыв") || strings.Contains(button.Text, "Отзыв") {
+				t.Fatalf("review action remained on rating edit screen: %q", button.Text)
+			}
+		}
+	}
+}
+
+func TestPersonalDiaryRatingPanelShowsScheduledReviewReminder(t *testing.T) {
+	book := ratingTestBook()
+	book.ReviewReminders = []chatdata.ReviewReminder{{UserID: 1, DueAt: time.Date(2026, 8, 24, 19, 0, 0, 0, time.UTC)}}
+
+	text := renderPersonalRatingPanel(book, false, 1)
+	if !strings.Contains(text, "Об отзыве: <b>напомню позже</b>") || !strings.Contains(text, "Оценку можно поставить сейчас") {
+		t.Fatalf("scheduled reminder has no clear next step: %s", text)
+	}
+	buttons := personalRatingPanelButtons(book)
+	if len(buttons) != 4 {
+		t.Fatalf("personal button rows = %d, want 4: %#v", len(buttons), buttons)
+	}
+	for _, row := range buttons {
+		for _, button := range row {
+			if strings.Contains(button.Text, "отзыв") {
+				t.Fatalf("review action remained after scheduling reminder: %q", button.Text)
+			}
+		}
 	}
 }
 

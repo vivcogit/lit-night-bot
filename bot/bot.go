@@ -2,13 +2,22 @@ package bot
 
 import (
 	"fmt"
+	chatdata "lit-night-bot/chat-data"
 	io "lit-night-bot/io"
+	"net/http"
 	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sirupsen/logrus"
 )
+
+const telegramLongPollSeconds = 60
+const telegramHTTPTimeout = 75 * time.Second
+
+func newTelegramHTTPClient() *http.Client {
+	return &http.Client{Timeout: telegramHTTPTimeout}
+}
 
 type LitNightBot struct {
 	bot               *tgbotapi.BotAPI
@@ -17,6 +26,18 @@ type LitNightBot struct {
 	locks             sync.Map
 	historySelections sync.Map
 	location          *time.Location
+	reviewStateSaver  func(int64, *chatdata.ChatData) error
+	reviewRetryMu     sync.Mutex
+	// reviewRetryAt is a best-effort fallback when persisting Telegram's
+	// RetryAfter fails. The normal durable source of truth remains chat data;
+	// this map intentionally does not survive a process restart.
+	reviewRetryAt map[reviewDeliveryKey]time.Time
+	reviewNow     func() time.Time
+}
+
+func (lnb *LitNightBot) chatMutex(chatID int64) *sync.Mutex {
+	lockValue, _ := lnb.locks.LoadOrStore(chatID, &sync.Mutex{})
+	return lockValue.(*sync.Mutex)
 }
 
 func chatIDFromUpdate(update *tgbotapi.Update, log *logrus.Entry) (chatID int64, ok bool) {
@@ -43,7 +64,7 @@ func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isD
 	if location == nil {
 		return nil, fmt.Errorf("application location is required")
 	}
-	bot, err := tgbotapi.NewBotAPI(token)
+	bot, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, newTelegramHTTPClient())
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +73,7 @@ func NewLitNightBot(logger *logrus.Entry, token string, iocd *io.IoChatData, isD
 
 	logger.WithField("username", bot.Self.UserName).Info("Bot authorized")
 
-	return &LitNightBot{bot: bot, iocd: iocd, logger: logger, location: location}, nil
+	return &LitNightBot{bot: bot, iocd: iocd, logger: logger, location: location, reviewNow: time.Now}, nil
 }
 
 func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {
@@ -63,8 +84,7 @@ func (lnb *LitNightBot) handleUpdatesChan(updates *tgbotapi.UpdatesChannel) {
 				return
 			}
 			logger := lnb.getUserLogger(chatID, &update)
-			lockValue, _ := lnb.locks.LoadOrStore(chatID, &sync.Mutex{})
-			chatLock := lockValue.(*sync.Mutex)
+			chatLock := lnb.chatMutex(chatID)
 			chatLock.Lock()
 			defer chatLock.Unlock()
 
@@ -94,7 +114,7 @@ func (lnb *LitNightBot) Start() {
 	lnb.InitMenu()
 
 	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = 60
+	updateConfig.Timeout = telegramLongPollSeconds
 
 	updates := lnb.bot.GetUpdatesChan(updateConfig)
 

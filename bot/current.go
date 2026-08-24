@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	chatdata "lit-night-bot/chat-data"
+	"strconv"
+	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -65,7 +67,7 @@ func (lnb *LitNightBot) handleCurrentDeadline(update *tgbotapi.Update, logger *l
 		return
 	}
 	current.Deadline = &date
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to save deadline")
 		lnb.SendPlainMessage(chatID, "Не удалось сохранить дедлайн. Попробуйте ещё раз.")
 		return
@@ -85,41 +87,164 @@ func (lnb *LitNightBot) handleCurrentComplete(update *tgbotapi.Update, logger *l
 	}
 	lnb.sendMessage(chatID, SendMessageParams{
 		Text:    fmt.Sprintf("Как завершили чтение «%s»?", current.DisplayName()),
-		Buttons: currentCompletionButtons(current.ID),
+		Buttons: currentCompletionButtonsForChat(current.ID, update.FromChat().IsPrivate()),
 	})
 }
 
 func currentCompletionButtons(bookID string) [][]tgbotapi.InlineKeyboardButton {
+	return currentCompletionButtonsForChat(bookID, false)
+}
+
+func currentCompletionButtonsForChat(bookID string, private bool) [][]tgbotapi.InlineKeyboardButton {
+	completedText := "✅ Обсудили"
+	if private {
+		completedText = "✅ Прочитано"
+	}
 	return [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✅ Прочитали", GetCallbackParamStr(CBCurrentMarkCompleted, bookID))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(completedText, GetCallbackParamStr(CBCurrentMarkCompleted, bookID))),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🚫 Не дочитали / бросили", GetCallbackParamStr(CBCurrentMarkUnfinished, bookID))),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBCancel))),
 	}
 }
 
+func unfinishedReasonButtons(bookID string) [][]tgbotapi.InlineKeyboardButton {
+	button := func(text string, code string) tgbotapi.InlineKeyboardButton {
+		return tgbotapi.NewInlineKeyboardButtonData(text, GetCallbackParamStr(CBCurrentUnfinishedReason, bookID, code))
+	}
+	return [][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(button("Не увлекла", chatdata.UnfinishedReasonNotEngaging)),
+		tgbotapi.NewInlineKeyboardRow(button("Слишком тяжело читается", chatdata.UnfinishedReasonTooDifficult)),
+		tgbotapi.NewInlineKeyboardRow(button("Не подошла для клуба", chatdata.UnfinishedReasonNotForClub)),
+		tgbotapi.NewInlineKeyboardRow(button("Не успели и не хотим продолжать", chatdata.UnfinishedReasonNoTime)),
+		tgbotapi.NewInlineKeyboardRow(button("Другая причина", chatdata.UnfinishedReasonOther)),
+		tgbotapi.NewInlineKeyboardRow(button("Без причины", "none")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBCancel))),
+	}
+}
+
+func (lnb *LitNightBot) showUnfinishedReasonChoices(message *tgbotapi.Message, expectedID string) {
+	data := lnb.iocd.GetOrCreateChatData(message.Chat.ID)
+	current := data.CurrentBook()
+	if current == nil || !strings.EqualFold(current.ID, expectedID) {
+		lnb.editMessage(message.Chat.ID, message.MessageID, "Эта кнопка устарела: текущая книга уже изменилась.", nil)
+		return
+	}
+	lnb.editMessage(message.Chat.ID, message.MessageID, "Почему решили не дочитывать «"+current.DisplayName()+"»?", unfinishedReasonButtons(current.ID))
+}
+
 func (lnb *LitNightBot) finishCurrentBook(chatID int64, messageID int, expectedID string, status chatdata.BookStatus, logger *logrus.Entry) {
+	_ = lnb.finishCurrentBookWithReason(chatID, messageID, expectedID, status, nil, logger)
+}
+
+func (lnb *LitNightBot) finishCurrentBookWithReason(chatID int64, messageID int, expectedID string, status chatdata.BookStatus, reason *chatdata.UnfinishedReason, logger *logrus.Entry) bool {
 	data := lnb.iocd.GetOrCreateChatData(chatID)
-	book, err := data.FinishCurrentBook(expectedID, status, time.Now())
+	finishedAt := time.Now()
+	book, err := data.FinishCurrentBookWithReason(expectedID, status, reason, finishedAt)
 	if err != nil {
 		logger.WithError(err).Warn("Failed to finish current book")
 		lnb.editMessage(chatID, messageID, "Эта кнопка устарела: текущая книга уже изменилась.", nil)
-		return
+		return false
 	}
-	if err := lnb.iocd.SaveChatData(chatID, data); err != nil {
+	if status == chatdata.StatusCompleted && data.IsPrivateChat(chatID) {
+		book.OpenReviewCollection(finishedAt)
+	}
+	if err := lnb.commitChatData(chatID, data, logger); err != nil {
 		logger.WithError(err).Error("Failed to save final book status")
 		lnb.editMessage(chatID, messageID, "Не удалось сохранить новый статус книги. Попробуйте ещё раз.", nil)
-		return
+		return false
 	}
 	if status == chatdata.StatusCompleted {
 		private, userID := ratingChatContext(data, chatID)
 		lnb.editHTMLMessage(chatID, messageID, renderRatingPanelForChat(book, true, private, userID), ratingPanelButtonsForChat(book, private))
-		return
+		return true
 	}
 	buttons := [][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("📖 Открыть карточку", GetCallbackParamStr(CBBookShowReplacing, book.ID)),
 		tgbotapi.NewInlineKeyboardButtonData("Закрыть", GetCallbackParamStr(CBCancel)),
 	)}
-	lnb.editMessage(chatID, messageID, fmt.Sprintf("🚫 Книга «%s» отмечена как недочитанная и добавлена в историю.", book.DisplayName()), buttons)
+	text := fmt.Sprintf("🚫 Книга «%s» отмечена как недочитанная и добавлена в историю.", book.DisplayName())
+	if reasonText := reason.DisplayText(); reasonText != "" {
+		text += "\nПричина: " + reasonText
+	}
+	lnb.editMessage(chatID, messageID, text, buttons)
+	return true
+}
+
+func unfinishedReasonReplyConfig(chatID int64, user *tgbotapi.User, bookID string, sourceMessageID int) tgbotapi.MessageConfig {
+	userID := int64(0)
+	if user != nil {
+		userID = user.ID
+	}
+	text := fmt.Sprintf("Напишите общую причину одним сообщением.\n\nunfinished_reason:%s:%d:%d", bookID, userID, sourceMessageID)
+	return selectiveForceReplyConfig(chatID, user, text)
+}
+
+func parseUnfinishedReasonPrompt(text string) (string, int64, int, bool) {
+	for _, line := range strings.Split(text, "\n") {
+		parts := strings.Split(strings.TrimSpace(line), ":")
+		if len(parts) != 4 || parts[0] != "unfinished_reason" {
+			continue
+		}
+		userID, userErr := strconv.ParseInt(parts[2], 10, 64)
+		sourceMessageID, sourceErr := strconv.Atoi(parts[3])
+		if parts[1] == "" || userErr != nil || sourceErr != nil {
+			return "", 0, 0, false
+		}
+		return parts[1], userID, sourceMessageID, true
+	}
+	return "", 0, 0, false
+}
+
+func (lnb *LitNightBot) chooseUnfinishedReason(update *tgbotapi.Update, params []string, logger *logrus.Entry) {
+	if len(params) < 2 || update.CallbackQuery.From == nil {
+		return
+	}
+	bookID, code := params[0], params[1]
+	current := lnb.iocd.GetOrCreateChatData(update.CallbackQuery.Message.Chat.ID).CurrentBook()
+	if current == nil || !strings.EqualFold(current.ID, bookID) {
+		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Текущая книга уже изменилась"))
+		return
+	}
+	if code == chatdata.UnfinishedReasonOther {
+		request := unfinishedReasonReplyConfig(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.From, bookID, update.CallbackQuery.Message.MessageID)
+		if _, err := lnb.bot.Send(request); err != nil {
+			lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Не удалось открыть ввод причины"))
+			return
+		}
+		lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Жду причину отдельным сообщением"))
+		return
+	}
+	var reason *chatdata.UnfinishedReason
+	if code != "none" {
+		var err error
+		reason, err = chatdata.NewUnfinishedReason(code, "")
+		if err != nil {
+			lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, "Некорректная причина"))
+			return
+		}
+	}
+	lnb.finishCurrentBookWithReason(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, bookID, chatdata.StatusUnfinished, reason, logger)
+	lnb.bot.Request(tgbotapi.NewCallback(update.CallbackQuery.ID, ""))
+}
+
+func (lnb *LitNightBot) handleUnfinishedReasonReply(message *tgbotapi.Message, original string, logger *logrus.Entry) bool {
+	bookID, expectedUserID, sourceMessageID, ok := parseUnfinishedReasonPrompt(original)
+	if !ok {
+		return false
+	}
+	if message.From == nil || message.From.ID != expectedUserID {
+		lnb.SendPlainMessage(message.Chat.ID, "Этот запрос причины адресован другому участнику.")
+		return true
+	}
+	reason, err := chatdata.NewUnfinishedReason(chatdata.UnfinishedReasonOther, message.Text)
+	if err != nil {
+		lnb.SendPlainMessage(message.Chat.ID, err.Error())
+		return true
+	}
+	if lnb.finishCurrentBookWithReason(message.Chat.ID, sourceMessageID, bookID, chatdata.StatusUnfinished, reason, logger) && message.ReplyToMessage != nil {
+		lnb.removeMessage(message.Chat.ID, message.ReplyToMessage.MessageID)
+	}
+	return true
 }
 
 func (lnb *LitNightBot) handleCurrentRandom(update *tgbotapi.Update, logger *logrus.Entry) {
@@ -186,6 +311,7 @@ func (lnb *LitNightBot) setCurrentBook(chatID int64, data *chatdata.ChatData, id
 		return false
 	}
 	lnb.SendPlainMessage(chatID, fmt.Sprintf("📖 Текущая книга: «%s»\nАвтоматический дедлайн: %s", book.DisplayName(), deadline.Format(DATE_LAYOUT)))
+	_, _ = lnb.sendPendingReviewRequests(chatID, data, time.Now(), false, logger)
 	return true
 }
 

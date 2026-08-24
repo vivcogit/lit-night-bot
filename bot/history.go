@@ -51,17 +51,63 @@ func (lnb *LitNightBot) handleHistoryRemoveBook(message *tgbotapi.Message, callb
 		return
 	}
 	page, _ := strconv.Atoi(params[1])
-	if len(book.Ratings) > 0 {
+	if details := historyRemovalDetails(book); len(details) > 0 {
 		buttons := [][]tgbotapi.InlineKeyboardButton{tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Удалить книгу и оценки", GetCallbackParamStr(CBHistoryRemoveConfirm, book.ID, strconv.Itoa(page))),
+			tgbotapi.NewInlineKeyboardButtonData("Удалить книгу и данные", GetCallbackParamStr(CBHistoryRemoveConfirm, book.ID, strconv.Itoa(page))),
 			tgbotapi.NewInlineKeyboardButtonData("Отмена", GetCallbackParamStr(CBHistoryRemoveCancel, strconv.Itoa(page))),
 		)}
-		text := fmt.Sprintf("⚠️ У книги «%s» есть %s. При удалении книги они также будут удалены. Продолжить?", book.DisplayName(), ratingCountLabel(len(book.Ratings)))
+		text := fmt.Sprintf("⚠️ У книги «%s» сохранены:\n— %s\n\nПри удалении книги эти данные тоже будут удалены. Продолжить?", book.DisplayName(), strings.Join(details, "\n— "))
 		lnb.editMessage(message.Chat.ID, message.MessageID, text, buttons)
 		lnb.bot.Request(tgbotapi.NewCallback(callbackID, "Нужно подтверждение"))
 		return
 	}
 	lnb.removeHistoryBook(message, callbackID, book.ID, page, logger)
+}
+
+func historyRemovalDetails(book *chatdata.ClubBook) []string {
+	if book == nil {
+		return nil
+	}
+	details := make([]string, 0, 5)
+	if len(book.Ratings) > 0 {
+		details = append(details, ratingCountLabel(len(book.Ratings)))
+	}
+	if book.RatingsClosedAt != nil {
+		details = append(details, "итог сбора оценок")
+	}
+	if len(book.Reviews) > 0 {
+		details = append(details, reviewCountLabel(len(book.Reviews)))
+	}
+	if len(book.ReviewReminders) > 0 {
+		details = append(details, reviewReminderCountLabel(len(book.ReviewReminders)))
+	}
+	if book.ReviewCollectionOpen() {
+		details = append(details, "данные сбора отзывов")
+	}
+	if book.DiscussionSummary != nil {
+		details = append(details, "итог обсуждения")
+	}
+	return details
+}
+
+func reviewCountLabel(count int) string {
+	suffix := "отзывов"
+	if count%10 == 1 && count%100 != 11 {
+		suffix = "отзыв"
+	} else if count%10 >= 2 && count%10 <= 4 && (count%100 < 12 || count%100 > 14) {
+		suffix = "отзыва"
+	}
+	return fmt.Sprintf("%d %s", count, suffix)
+}
+
+func reviewReminderCountLabel(count int) string {
+	suffix := "напоминаний об отзыве"
+	if count%10 == 1 && count%100 != 11 {
+		suffix = "напоминание об отзыве"
+	} else if count%10 >= 2 && count%10 <= 4 && (count%100 < 12 || count%100 > 14) {
+		suffix = "напоминания об отзыве"
+	}
+	return fmt.Sprintf("%d %s", count, suffix)
 }
 
 func (lnb *LitNightBot) confirmHistoryRemoveBook(message *tgbotapi.Message, callbackID string, params []string, logger *logrus.Entry) {

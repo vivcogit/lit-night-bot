@@ -2,15 +2,53 @@ package utils
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
 
+// PostCommitDurabilityError means that the new file is already visible after
+// an atomic rename, but syncing the parent directory could not be confirmed.
+// Callers must not treat this as an ordinary pre-commit write failure.
+type PostCommitDurabilityError struct {
+	Err error
+}
+
+func (err *PostCommitDurabilityError) Error() string {
+	return fmt.Sprintf("файл заменён, но долговечность записи не подтверждена: %v", err.Err)
+}
+
+func (err *PostCommitDurabilityError) Unwrap() error { return err.Err }
+
+func IsPostCommitDurabilityError(err error) bool {
+	var durabilityErr *PostCommitDurabilityError
+	return errors.As(err, &durabilityErr)
+}
+
+func SyncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("ошибка при открытии каталога для синхронизации: %w", err)
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("ошибка синхронизации каталога: %w", err)
+	}
+	return nil
+}
+
 func WriteJSONToFile[T any](filePath string, data T) error {
+	return writeJSONToFile(filePath, data, SyncDirectory)
+}
+
+func writeJSONToFile[T any](filePath string, data T, syncDir func(string) error) error {
 	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("ошибка при создании каталога: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("ошибка при настройке прав каталога: %w", err)
 	}
 
 	file, err := os.CreateTemp(dir, ".chat-data-*.tmp")
@@ -19,11 +57,7 @@ func WriteJSONToFile[T any](filePath string, data T) error {
 	}
 	tempPath := file.Name()
 	defer os.Remove(tempPath)
-	mode := os.FileMode(0o644)
-	if existing, statErr := os.Stat(filePath); statErr == nil {
-		mode = existing.Mode().Perm()
-	}
-	if err := file.Chmod(mode); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		file.Close()
 		return fmt.Errorf("ошибка настройки прав файла: %w", err)
 	}
@@ -43,6 +77,9 @@ func WriteJSONToFile[T any](filePath string, data T) error {
 	}
 	if err := os.Rename(tempPath, filePath); err != nil {
 		return fmt.Errorf("ошибка атомарной замены файла: %w", err)
+	}
+	if err := syncDir(dir); err != nil {
+		return &PostCommitDurabilityError{Err: err}
 	}
 
 	return nil

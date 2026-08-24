@@ -5,6 +5,8 @@ import (
 	"fmt"
 	chatdata "lit-night-bot/chat-data"
 	chatio "lit-night-bot/io"
+	"lit-night-bot/utils"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -19,8 +21,13 @@ func runMigrationCommand(args []string) int {
 	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	apply := flags.Bool("apply", false, "write migrated data; without this flag only a dry-run is performed")
 	chatID := flags.Int64("chat-id", 0, "migrate only one chat ID")
+	botStopped := flags.Bool("confirm-bot-stopped", false, "confirm that the previous bot process is stopped before writing")
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if *apply && !*botStopped {
+		fmt.Println("❌ Перед --apply остановите бота и повторите команду с --confirm-bot-stopped.")
+		return 1
 	}
 	logger := getLogger(true).WithField("entry", "migration")
 	storage := chatio.NewIOChatData(logger, GetDataPath())
@@ -32,6 +39,13 @@ func runMigrationCommand(args []string) int {
 }
 
 func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64, now time.Time) error {
+	if apply {
+		dataLock, err := storage.TryAcquireDataDirectoryLock()
+		if err != nil {
+			return fmt.Errorf("нельзя запустить миграцию: остановите бота и другие миграции: %w", err)
+		}
+		defer dataLock.Close()
+	}
 	files, err := storage.GetDatasList()
 	if err != nil {
 		return err
@@ -47,14 +61,25 @@ func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64
 			return fmt.Errorf("чат %d: JSON не читается", chatID)
 		}
 		if !data.IsLegacy() {
+			if data.IsFutureSchema() {
+				return fmt.Errorf("чат %d: схема v%d новее поддерживаемой v%d", chatID, data.SchemaVersion, chatdata.CurrentSchemaVersion)
+			}
 			fmt.Printf("⏭ Чат %d: уже v%d, пропущен\n", chatID, data.SchemaVersion)
 			continue
 		}
-		migrated, result, err := chatdata.MigrateV1(data, now)
+		var migrated *chatdata.ChatData
+		var result chatdata.MigrationResult
+		switch data.SchemaVersion {
+		case 0, 1:
+			migrated, result, err = chatdata.MigrateV1(data, now)
+		case 2:
+			migrated, result, err = chatdata.MigrateV2(data)
+		default:
+			err = fmt.Errorf("неподдерживаемая схема v%d", data.SchemaVersion)
+		}
 		if err != nil {
 			return fmt.Errorf("чат %d: %w", chatID, err)
 		}
-		migrated.MigrationComplete = true
 		if err := migrated.ValidateV2(); err != nil {
 			return fmt.Errorf("чат %d: %w", chatID, err)
 		}
@@ -63,9 +88,9 @@ func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64
 	}
 	if len(candidates) == 0 {
 		if onlyChatID != 0 {
-			fmt.Printf("ℹ️ Для чата %d нет JSON v1, требующего миграции.\n", onlyChatID)
+			fmt.Printf("ℹ️ Для чата %d нет JSON, требующего миграции.\n", onlyChatID)
 		} else {
-			fmt.Println("ℹ️ Нет JSON v1, требующих миграции.")
+			fmt.Println("ℹ️ Нет JSON, требующих миграции.")
 		}
 		return nil
 	}
@@ -79,15 +104,30 @@ func migrateStoredChats(storage *chatio.IoChatData, apply bool, onlyChatID int64
 		if err != nil {
 			return fmt.Errorf("чат %d: резервная копия: %w", candidate.chatID, err)
 		}
+		var durabilityErr error
 		if err := storage.SaveChatData(candidate.chatID, candidate.migrated); err != nil {
-			return fmt.Errorf("чат %d: запись v2: %w", candidate.chatID, err)
+			if !utils.IsPostCommitDurabilityError(err) {
+				return fmt.Errorf("чат %d: запись v%d: %w", candidate.chatID, chatdata.CurrentSchemaVersion, err)
+			}
+			fmt.Printf("⚠️ Чат %d: v%d записана, но долговечность каталога не подтверждена; повторяю синхронизацию и проверяю видимый файл.\n", candidate.chatID, chatdata.CurrentSchemaVersion)
+			durabilityErr = utils.SyncDirectory(filepath.Dir(storage.GetChatDataFilePath(candidate.chatID)))
 		}
 		saved := storage.GetChatData(candidate.chatID)
 		if saved == nil || saved.ValidateV2() != nil || len(saved.Books) != candidate.result.TotalBookCount {
 			if restoreErr := storage.RestoreChatData(candidate.chatID, backupPath); restoreErr != nil {
-				return fmt.Errorf("чат %d: проверка v2 и откат не удались: %v", candidate.chatID, restoreErr)
+				if utils.IsPostCommitDurabilityError(restoreErr) {
+					if syncErr := utils.SyncDirectory(filepath.Dir(storage.GetChatDataFilePath(candidate.chatID))); syncErr == nil {
+						return fmt.Errorf("чат %d: v%d не прошёл проверку, откат выполнен после повторной синхронизации", candidate.chatID, chatdata.CurrentSchemaVersion)
+					} else {
+						return fmt.Errorf("чат %d: откат видим, но его долговечность не подтверждена: %w", candidate.chatID, syncErr)
+					}
+				}
+				return fmt.Errorf("чат %d: проверка v%d и откат не удались: %v", candidate.chatID, chatdata.CurrentSchemaVersion, restoreErr)
 			}
-			return fmt.Errorf("чат %d: v2 не прошёл проверку, выполнен откат", candidate.chatID)
+			return fmt.Errorf("чат %d: v%d не прошёл проверку, выполнен откат", candidate.chatID, chatdata.CurrentSchemaVersion)
+		}
+		if durabilityErr != nil {
+			return fmt.Errorf("чат %d: v%d записана и проверена, но долговечность каталога не подтверждена; дальнейшие чаты не изменялись: %w", candidate.chatID, chatdata.CurrentSchemaVersion, durabilityErr)
 		}
 		fmt.Printf("✅ Чат %d: мигрирован, копия %s\n", candidate.chatID, backupPath)
 	}
